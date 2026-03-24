@@ -28,20 +28,16 @@
 *                                      array pointer 
 */
 
-// typedef enum {
-//     CAPACITY,               // capacity 
-//     LENGTH,                 // length 
-//     STRIDE,                 // stride
-//     FIELD_COUNT             // number of fields
-// } SPDA_FIELD;
-
 typedef struct {
-    size_t stride;
-    size_t length;
     size_t capacity; 
+    size_t length;
+    size_t stride;
 } spda_header_t;
 
-#define SPDA_DEFAULT_CAPACITY 1 * 1024
+#ifndef SPDA_DEFAULT_CAPACITY
+    #define SPDA_DEFAULT_CAPACITY 1024
+#endif 
+
 #define SPDA_GROWTH_FACTOR 2    
 #define SPDA_SHRINK_THRESHOLD 0.25 // if array utilisation falls below 25% shrink the capacity of array 
 

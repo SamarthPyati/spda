@@ -71,16 +71,21 @@ void *_spda_resize(void *array, size_t size) {
 }
 
 void *spda_shrink_to_fit(void *array) {
-  /* Array shrink to fit for efficient memory utilization */
   if (!_spda_is_valid(array))
     return NULL;
 
   size_t len = spda_len(array);
   size_t cap = spda_cap(array);
 
-  if (len > 0 && len < cap * SPDA_SHRINK_THRESHOLD) {
-    size_t new_cap = (len * 2 > SPDA_DEFAULT_CAPACITY) ? len * 2 : SPDA_DEFAULT_CAPACITY;
-    array = _spda_resize(array, new_cap);
+  // Integer-only threshold check: equivalent to len < cap * 0.25
+  // avoids implicit size_t -> double promotion in the original
+  if (len > 0 && len * 4 < cap) {
+    void *new_array = _spda_resize(array, len * SPDA_GROWTH_FACTOR);
+    if (new_array == NULL) {
+      raise("MEM_ALLOCATION", "Failed to shrink array");
+      return array;  // return original on failure, not NULL
+    }
+    return new_array;
   }
   return array;
 }
