@@ -114,12 +114,33 @@ void *_spda_append(void *array, const void *value) {
 }
 
 void *_spda_append_many(void *array, void *items, size_t item_count) {
+  if (!_spda_is_valid(array) || !items || item_count == 0)
+      return array;
+
+  size_t len    = spda_len(array);
+  size_t cap    = spda_cap(array);
   size_t stride = spda_stride(array);
-  char *item_ptr = (char *)items;
-  for (size_t i = 0; i < item_count; ++i) {
-    array = _spda_append(array, item_ptr);
-    item_ptr += stride;
+  size_t required = len + item_count;
+
+  // Single resize upfront if needed, instead of realloc-ing on every boundary
+  if (required > cap) {
+    // Grow by GROWTH_FACTOR until capacity fits required
+    size_t new_cap = cap;
+    while (new_cap < required)
+      new_cap *= SPDA_GROWTH_FACTOR;
+
+    void *resized = _spda_resize(array, new_cap);
+    if (resized == NULL) {
+      raise("MEM_ALLOCATION", "Failed to resize array in append_many");
+      return array;
+    }
+    array = resized;
   }
+
+  // One memcpy for the entire block instead of per-element copies
+  memcpy((char *)array + len * stride, items, item_count * stride);
+  _spda_get_header(array)->length = required;
+
   return array;
 }
 
