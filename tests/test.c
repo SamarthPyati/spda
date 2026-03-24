@@ -198,7 +198,7 @@ void test_shrink() {
                 "Array length did not match expected value after pop");
 
     // Shrink the array to fit its current size
-    array = spda_shrink(array);
+    array = spda_shrink_to_fit(array);
     size_t shrunk_cap = spda_cap(array);
 
     TEST_ASSERT(shrunk_cap >= spda_len(array) && shrunk_cap < original_cap, 

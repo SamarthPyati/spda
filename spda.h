@@ -2,11 +2,10 @@
 **  @brief: A Generic Dynamic Array Implementation in C **
 *   @Author: Samarth Pyati 
 *   @Date : 10-01-2025
-*   @Version : 1.7
 */
 
-#ifndef SPDA_H_
-#define SPDA_H_
+#ifndef SPDA_HEADER_GUARD_H_
+#define SPDA_HEADER_GUARD_H_
 
 #include <stdio.h>          // size_t 
 #include <stdbool.h>        // bool
@@ -29,14 +28,20 @@
 *                                      array pointer 
 */
 
-typedef enum {
-    CAPACITY,               // capacity 
-    LENGTH,                 // length 
-    STRIDE,                 // stride
-    FIELD_COUNT             // number of fields
-} SPDA_FIELD;
+// typedef enum {
+//     CAPACITY,               // capacity 
+//     LENGTH,                 // length 
+//     STRIDE,                 // stride
+//     FIELD_COUNT             // number of fields
+// } SPDA_FIELD;
 
-#define SPDA_DEFAULT_CAPACITY 8
+typedef struct {
+    size_t stride;
+    size_t length;
+    size_t capacity; 
+} spda_header_t;
+
+#define SPDA_DEFAULT_CAPACITY 1 * 1024
 #define SPDA_GROWTH_FACTOR 2    
 #define SPDA_SHRINK_THRESHOLD 0.25 // if array utilisation falls below 25% shrink the capacity of array 
 
@@ -52,19 +57,35 @@ typedef enum {
 /* Core Operations */
 void *_spda_create(size_t cap, size_t stride);
 void _spda_destroy(void *array);
-static inline bool _spda_is_valid(const void *array);
 
 /* Field Operations */
-size_t _spda_field_get(void *array, size_t field);
-void _spda_field_set(void *array, size_t field, size_t value);
-size_t spda_len(const void *array);
-size_t spda_cap(const void *array);
-size_t spda_stride(const void *array);
+static inline spda_header_t* _spda_get_header(const void *array) {
+    if (!array) return NULL;
+    return (spda_header_t *)array - 1;
+}
+
+static inline bool _spda_is_valid(const void *array) {
+    if (!array) return false;
+    spda_header_t *header = _spda_get_header(array);
+    return header && header->stride > 0;
+}
+
+static inline size_t spda_len(const void *array) {
+    return _spda_get_header(array)->length;
+}
+
+static inline size_t spda_cap(const void *array) {
+    return _spda_get_header(array)->capacity;
+}
+
+static inline size_t spda_stride(const void *array) {
+    return _spda_get_header(array)->stride;
+}
 
 /* Memory Operations */
 void *_spda_resize_def(void *array);
 void *_spda_resize(void *array, size_t size);     
-void *spda_shrink(void *array);
+void *spda_shrink_to_fit(void *array);
 
 /* Array Operations */
 void *_spda_append(void *array, const void* value);
@@ -160,9 +181,9 @@ void _printStr(void *elem);
     _spda_reverse((array))
 
 #define spda_clear(array) \
-    _spda_field_set((array), LENGTH, 0)
+    _spda_get_header((array))->length = 0;
 
 #define spda_set_length(array, value) \
-    _spda_field_set((array), LENGTH, value)
+    _spda_get_header((array))->length = (value);
 
-#endif // SPDA_H_
+#endif // SPDA_HEADER_GUARD_H_

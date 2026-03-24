@@ -6,4 +6,5 @@ ex*
 *.o
 tests/playground
 tests/playground.c
+playground/
 
