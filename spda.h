@@ -155,7 +155,7 @@ void _printStr(void *elem);
 #define spda_append_items(array, items, count)                            \
     do {                                                                  \
             (array) = _spda_append_many((array), (items), (count));       \
-    } while (0);                                                          
+    } while (0)
 
 #define spda_pop(array) _spda_pop(array)
 #define spda_pop_ret(array, dest) _spda_pop_ret(array, dest)
@@ -176,9 +176,9 @@ void _printStr(void *elem);
     _spda_reverse((array))
 
 #define spda_clear(array) \
-    _spda_get_header((array))->length = 0;
+    _spda_get_header((array))->length = 0
 
 #define spda_set_length(array, value) \
-    _spda_get_header((array))->length = (value);
+    _spda_get_header((array))->length = (value)
 
 #endif // SPDA_HEADER_GUARD_H_
