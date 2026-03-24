@@ -240,8 +240,13 @@ void *spda_copy(void *src) {
     raise("MEM_ALLOCATION", "Failed to allocate memory for the new array");
     return NULL;
   }
-  memcpy(_dst, (spda_header_t *)src - 1, arr_size + header_size);
-  _spda_get_header(_dst)->length = length;
+
+  memcpy(
+    (spda_header_t *)_dst - 1, 
+    (spda_header_t *) src - 1, 
+    arr_size + header_size
+  );
+  
   return (void *)((spda_header_t *)_dst + 1);
 }
 
