@@ -160,13 +160,8 @@ void _printStr(void *elem);
 #define spda_pop(array) _spda_pop(array)
 #define spda_pop_ret(array, dest) _spda_pop_ret(array, dest)
 
-#define spda_foreach(type, array, varname)                                  \
-    for (size_t _spda_idx = 0;                                              \
-         _spda_idx < spda_len(array);                                       \
-         ++_spda_idx)                                                       \
-        for (type varname = (array)[_spda_idx], *_spda_flag = (type*)1;     \
-             _spda_flag;                                                    \
-             _spda_flag = NULL)  // FLAG HACK: FIX LATER 
+#define spda_foreach(type, varname, array) \
+    for (type *varname = (array); varname != (array) + spda_len(array); ++varname)
 
 #define spda_insert(array, idx, value)                      \
     do {                                                    \

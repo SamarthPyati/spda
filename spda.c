@@ -42,10 +42,6 @@ void *_spda_resize_def(void *array) {
   spda_header_t *header = _spda_get_header(array);
   size_t new_cap = (size_t)header->capacity * SPDA_GROWTH_FACTOR;
   size_t new_size = sizeof(spda_header_t) + (new_cap * header->stride);
-  if (header == NULL) {
-    raise("MEM_ALLOCATION", "Array header was not allocated properly.");
-    return NULL;
-  }
 
   spda_header_t *new_header = realloc(header, new_size);
   if (new_header == NULL) {
@@ -53,9 +49,8 @@ void *_spda_resize_def(void *array) {
     return NULL;
   }
 
-  header = new_header;
-  header->capacity = new_cap;
-  return (void *)(header + 1);
+  new_header->capacity = new_cap;
+  return (void *)(new_header + 1);  
 }
 
 void *_spda_resize(void *array, size_t size) {
@@ -63,22 +58,16 @@ void *_spda_resize(void *array, size_t size) {
     return NULL;
 
   spda_header_t *header = _spda_get_header(array);
-  size_t new_cap = size;
-  size_t new_size = sizeof(spda_header_t) + (new_cap * header->stride);
-  if (header == NULL) {
-    raise("MEM_ALLOCATION", "Array header was not allocated properly.");
-    return NULL;
-  }
+  size_t new_size = sizeof(spda_header_t) + (size * header->stride);
 
-  void *new_header = realloc(header, new_size);
+  spda_header_t *new_header = realloc(header, new_size);
   if (new_header == NULL) {
     raise("MEM_ALLOCATION", "Failed to reallocate the array header.");
     return NULL;
   }
-  header = new_header;
 
-  header->capacity = new_cap;
-  return (void *)(header + 1);
+  new_header->capacity = size;
+  return (void *)(new_header + 1);
 }
 
 void *spda_shrink_to_fit(void *array) {
@@ -230,7 +219,6 @@ void *spda_copy(void *src) {
   }
 
   size_t capacity = spda_cap(src);
-  size_t length = spda_len(src);
   size_t stride = spda_stride(src);
   size_t arr_size = capacity * stride;
   size_t header_size = sizeof(spda_header_t);
@@ -247,7 +235,7 @@ void *spda_copy(void *src) {
     arr_size + header_size
   );
   
-  return (void *)((spda_header_t *)_dst + 1);
+  return (void *)_dst;
 }
 
 void spda_sort(void *array, int (*compar)(const void *, const void *)) {
