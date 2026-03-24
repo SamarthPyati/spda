@@ -54,7 +54,7 @@ A **simple and generic implementation of a dynamic array** in C, designed for ea
     - Copy `spda.h` and `build/libspda.so` into your project directory.
     - Compile by linking the library: 
     ```sh 
-    gcc -o my_program my_program.c spda.c -lspda -lm
+    gcc -o my_program my_program.c -Lbuild -lspda -lm
     ```
 
 
@@ -64,7 +64,7 @@ A **simple and generic implementation of a dynamic array** in C, designed for ea
 
 ```c
 #include <stdio.h>
-#include "spDa.h"
+#include "spda.h"
 
 int main(void) {
     srand(time(NULL));  // Set random seed
@@ -96,7 +96,7 @@ int main(void) {
     spda_print(a, printInt);
 
     // Iterate using spda_foreach macro
-    spda_foreach(int, a, item) {
+    spda_foreach(int, item, a) {
         printf("%d ", item *= 2);
     }
     printf("\n");
@@ -142,6 +142,16 @@ int main() {
 }
 ```
 
+## Testing
+
+To build and run the tests:
+
+```sh
+make all
+./bin/basic_test
+./bin/main_test
+```
+
 ## API Reference
 
 ### Creation and Destruction
@@ -174,12 +184,12 @@ int main() {
 
 ## Iteration
 
-- `spda_foreach(type, array, varname)`: Iterate over each element in the array, with `varname` being the loop variable.
+- `spda_foreach(type, varname, array)`: Iterate over each element in the array, with `varname` being the loop variable.
 
 ### Example:
 ```c
 int sum = 0;
-spda_foreach(int, array, item) {
+spda_foreach(int, item, array) {
     sum += item;
 }
 ```
