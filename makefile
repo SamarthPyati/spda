@@ -1,23 +1,22 @@
-CC = gcc
-CFLAGS = -Wall -Wextra -std=c17
-LDFLAGS = -lm
-BUILD_DL_FLAGS = -Wall -Wextra -std=c17 -shared -O3
+CC := cc
+CFLAGS := -Wall -Wextra -std=c17
+LDFLAGS := -lm
 
 # Directories
-SRC_DIR = .
-TEST_DIR = tests
-BIN_DIR = bin
-BUILD_DIR = build
+SRC_DIR 	:= .
+TEST_DIR 	:= tests
+BIN_DIR 	:= bin
+BUILD_DIR 	:= build
 
 # Source files
-SRC = $(SRC_DIR)/spDa.c
-HEADER = $(SRC_DIR)/spDa.h
-OBJ = $(SRC_DIR)/spDa.o
-DLIB = $(BUILD_DIR)/libspda.so
+SRC 	:= $(SRC_DIR)/spda.c
+HEADER 	:= $(SRC_DIR)/spda.h
+OBJ 	:= $(SRC_DIR)/spda.o
+DLIB 	:= $(BUILD_DIR)/libspda.so
 
 # Executables
-BASIC_TEST = $(BIN_DIR)/basic_test
-MAIN_TEST = $(BIN_DIR)/main_test
+BASIC_TEST 	:= $(BIN_DIR)/basic_test
+MAIN_TEST 	:= $(BIN_DIR)/main_test
 
 # Targets
 .PHONY: all clean build_lib
@@ -36,11 +35,17 @@ $(BIN_DIR):
 $(BUILD_DIR):
 	mkdir -p $@
 
-play:
-	$(CC) $(CFLAGS) -o ./tests/playground ./tests/playground.c $(SRC)
+PLAYGROUND_FILE := playground/play.c
+play: $(PLAYGROUND_FILE)
+	$(CC) $(CFLAGS) -I./ -o ./playground/bin/play $< $(SRC)
+	./playground/bin/play
 
-build_lib: $(BUILD_DIR)
+BUILD_DL_FLAGS := -Wall -Wextra -Werror -std=c17 -shared -O3
+build_lib: $(BUILD_DIR) | $(BUILD_DIR)
 	$(CC) $(BUILD_DL_FLAGS) -o $(DLIB) -fPIC $(SRC)
+
+test: $(MAIN_TEST)
+	./$<
 
 clean:
 	rm -rf $(BIN_DIR) $(BUILD_DIR)
