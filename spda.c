@@ -8,7 +8,7 @@ void *_spda_create(size_t capacity, size_t stride) {
     capacity = SPDA_DEFAULT_CAPACITY;
 
   if (stride == 0) {
-    raise("INVALID_ARGUMENT", "Stride (size of datatype) cannot be zero");
+    SPDA_ERR("INVALID_ARGUMENT", "Stride (size of datatype) cannot be zero");
     return NULL;
   }
 
@@ -17,7 +17,7 @@ void *_spda_create(size_t capacity, size_t stride) {
   spda_header_t *array = (spda_header_t *)malloc(header_size + array_size);
 
   if (!array) {
-    raise("MEM_ALLOCATION", "Failed memory allocation for dynamic array.");
+    SPDA_ERR("MEM_ALLOCATION", "Failed memory allocation for dynamic array.");
     return NULL;
   }
 
@@ -45,7 +45,7 @@ void *_spda_resize_def(void *array) {
 
   spda_header_t *new_header = realloc(header, new_size);
   if (new_header == NULL) {
-    raise("MEM_ALLOCATION", "Failed to reallocate the header and the array.");
+    SPDA_ERR("MEM_ALLOCATION", "Failed to reallocate the header and the array.");
     return NULL;
   }
 
@@ -62,7 +62,7 @@ void *_spda_resize(void *array, size_t size) {
 
   spda_header_t *new_header = realloc(header, new_size);
   if (new_header == NULL) {
-    raise("MEM_ALLOCATION", "Failed to reallocate the array header.");
+    SPDA_ERR("MEM_ALLOCATION", "Failed to reallocate the array header.");
     return NULL;
   }
 
@@ -82,7 +82,7 @@ void *spda_shrink_to_fit(void *array) {
   if (len > 0 && len * 4 < cap) {
     void *new_array = _spda_resize(array, len * SPDA_GROWTH_FACTOR);
     if (new_array == NULL) {
-      raise("MEM_ALLOCATION", "Failed to shrink array");
+      SPDA_ERR("MEM_ALLOCATION", "Failed to shrink array");
       return array;  // return original on failure, not NULL
     }
     return new_array;
@@ -92,7 +92,7 @@ void *spda_shrink_to_fit(void *array) {
 
 void *_spda_append(void *array, const void *value) {
   if (!_spda_is_valid(array) || !value) {
-    raise("INVALID_ARGUMENT", "Invalid array or value");
+    SPDA_ERR("INVALID_ARGUMENT", "Invalid array or value");
     return array;
   }
 
@@ -102,7 +102,7 @@ void *_spda_append(void *array, const void *value) {
   if (length >= capacity) {
     void *new_array = _spda_resize_def(array);
     if (new_array == NULL) {
-      raise("MEM_ALLOCATION", "Failed to resize array");
+      SPDA_ERR("MEM_ALLOCATION", "Failed to resize array");
       return array; // Return original array if resize fails
     }
     array = new_array;
@@ -131,7 +131,7 @@ void *_spda_append_many(void *array, void *items, size_t item_count) {
 
     void *resized = _spda_resize(array, new_cap);
     if (resized == NULL) {
-      raise("MEM_ALLOCATION", "Failed to resize array in append_many");
+      SPDA_ERR("MEM_ALLOCATION", "Failed to resize array in append_many");
       return array;
     }
     array = resized;
@@ -147,7 +147,7 @@ void *_spda_append_many(void *array, void *items, size_t item_count) {
 void _spda_pop(void *array) {
   size_t length = spda_len(array);
   if (length == 0) {
-    raise("INDEX_OUT_OF_BOUNDS", "Cannot pop elements from an empty array");
+    SPDA_ERR("INDEX_OUT_OF_BOUNDS", "Cannot pop elements from an empty array");
     return;
   }
   _spda_get_header(array)->length -= 1; // decrement length
@@ -157,7 +157,7 @@ bool _spda_pop_ret(void *array, void *dest) {
   size_t length = spda_len(array);
 
   if (length == 0) {
-    raise("INDEX_OUT_OF_BOUNDS", "Cannot pop elements from an empty array");
+    SPDA_ERR("INDEX_OUT_OF_BOUNDS", "Cannot pop elements from an empty array");
     return false;
   }
 
@@ -175,7 +175,7 @@ void *_spda_insert(void *array, int idx, const void *value) {
   size_t stride = spda_stride(array);
   size_t capacity = spda_cap(array);
   if (idx < 0 || (size_t)idx > length) {
-    raise("INDEX_OUT_OF_BOUNDS", "Index out of bounds for insert");
+    SPDA_ERR("INDEX_OUT_OF_BOUNDS", "Index out of bounds for insert");
     return array;
   }
   if (length >= capacity) {
@@ -192,7 +192,7 @@ void *_spda_remove(void *array, int idx) {
   size_t length = spda_len(array);
   size_t stride = spda_stride(array);
   if (idx < 0 || (size_t)idx >= length) {
-    raise("INDEX_OUT_OF_BOUNDS", "Index out of bounds for remove");
+    SPDA_ERR("INDEX_OUT_OF_BOUNDS", "Index out of bounds for remove");
     return array;
   }
   memmove((char *)array + idx * stride, (char *)array + (idx + 1) * stride,
@@ -205,7 +205,7 @@ void *_spda_remove_ret(void *array, int idx, void *dest) {
   size_t length = spda_len(array);
   size_t stride = spda_stride(array);
   if (idx < 0 || (size_t)idx >= length) {
-    raise("INDEX_OUT_OF_BOUNDS", "Index out of bounds for remove");
+    SPDA_ERR("INDEX_OUT_OF_BOUNDS", "Index out of bounds for remove");
     return array;
   }
   memcpy(dest, (char *)array + idx * stride, stride);
@@ -224,7 +224,7 @@ void _spda_reverse(void *array) {
   char *temp = malloc(stride);
 
   if (!temp) {
-    raise("MEM_ALLOCATION", "Failed to allocate temporary buffer");
+    SPDA_ERR("MEM_ALLOCATION", "Failed to allocate temporary buffer");
     return;
   }
 
@@ -240,7 +240,7 @@ void _spda_reverse(void *array) {
 
 void *spda_copy(void *src) {
   if (src == NULL) {
-    raise("INVALID_SOURCE", "Source array cannot be NULL");
+    SPDA_ERR("INVALID_SOURCE", "Source array cannot be NULL");
     return NULL;
   }
 
@@ -251,7 +251,7 @@ void *spda_copy(void *src) {
 
   void *_dst = _spda_create(capacity, stride);
   if (_dst == NULL) {
-    raise("MEM_ALLOCATION", "Failed to allocate memory for the new array");
+    SPDA_ERR("MEM_ALLOCATION", "Failed to allocate memory for the new array");
     return NULL;
   }
 
@@ -266,7 +266,7 @@ void *spda_copy(void *src) {
 
 void spda_sort(void *array, int (*compar)(const void *, const void *)) {
   if (!array) {
-    raise("INVALID_SOURCE", "Source array cannot be NULL");
+    SPDA_ERR("INVALID_SOURCE", "Source array cannot be NULL");
     exit(EXIT_FAILURE);
   }
 
@@ -278,7 +278,7 @@ void spda_sort(void *array, int (*compar)(const void *, const void *)) {
 
 void spda_print_metadata(void *array) {
   if (!array) {
-    raise("INVALID_SOURCE", "Source array cannot be NULL");
+    SPDA_ERR("INVALID_SOURCE", "Source array cannot be NULL");
     exit(EXIT_FAILURE);
   }
   /* Printing the Metadata of the array */

@@ -42,7 +42,7 @@ typedef struct {
 #define SPDA_SHRINK_THRESHOLD 0.25 // if array utilisation falls below 25% shrink the capacity of array 
 
 /* ERROR HANDLING */
-#define raise(etype, msg)                                                               \
+#define SPDA_ERR(etype, msg)                                                            \
     do {                                                                                \
         fprintf(stderr, "%s:%d [%s] - %s\n", __FILE__, __LINE__, etype, msg);           \
     } while (0)                                                         
@@ -136,16 +136,16 @@ void _printStr(void *elem);
 
 #define spda_destroy(array)  _spda_destroy(array)
 
-#define spda_append(array, value)                    \
-    do {                                             \
-        __typeof__(*(array)) temp = (value);                  \
-        (array) = _spda_append((array), &temp);      \
+#define spda_append(array, value)                     \
+    do {                                              \
+        __typeof__(*(array)) spda__tmp_ = (value);    \
+        (array) = _spda_append((array), &spda__tmp_); \
     } while (0)
 
-#define spda_append_many(array, ...)                                        \
-    do {                                                                    \
-        __typeof__(*(array)) _temp[] = {__VA_ARGS__};                       \
-        (array) = _spda_append_many((array), _temp, CARRAY_LEN(_temp));     \
+#define spda_append_many(array, ...)                                              \
+    do {                                                                          \
+        __typeof__(*(array)) spda__tmp_[] = {__VA_ARGS__};                        \
+        (array) = _spda_append_many((array), spda__tmp_, CARRAY_LEN(spda__tmp_)); \
     } while (0)
 
 #define spda_append_items(array, items, count)                            \
@@ -159,10 +159,10 @@ void _printStr(void *elem);
 #define spda_foreach(type, varname, array) \
     for (type *varname = (array); varname != (array) + spda_len(array); ++varname)
 
-#define spda_insert(array, idx, value)                      \
-    do {                                                    \
-        __typeof__(*(array)) temp = (value);                \
-        (array) = _spda_insert((array), (idx), &temp);      \
+#define spda_insert(array, idx, value)                       \
+    do {                                                     \
+        __typeof__(*(array)) spda__tmp_ = (value);           \
+        (array) = _spda_insert((array), (idx), &spda__tmp_); \
     } while (0)
 
 #define spda_remove(array, idx) _spda_remove((array), idx)
