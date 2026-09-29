@@ -1,6 +1,13 @@
-CC := cc
+CC := clang
 CFLAGS := -Wall -Wextra -std=c17
 LDFLAGS := -lm
+
+DEBUG := -fsanitize=address,undefined -g
+
+
+ifneq ($(DEBUG),)
+	CFLAGS += $(DEBUG)
+endif
 
 # Directories
 SRC_DIR 	:= .
