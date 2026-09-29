@@ -2,11 +2,10 @@ CC := clang
 CFLAGS := -Wall -Wextra -std=c17
 LDFLAGS := -lm
 
-DEBUG := -fsanitize=address,undefined -g
+DEBUG_FLAGS := -fsanitize=address,undefined -g
 
-
-ifneq ($(DEBUG),)
-	CFLAGS += $(DEBUG)
+ifeq ($(DEBUG),1)
+	CFLAGS += $(DEBUG_FLAGS)
 endif
 
 # Directories

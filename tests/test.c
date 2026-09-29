@@ -88,6 +88,14 @@ int pass_count = 0;
     pass_count++; \
 } while (0)
 
+void test_spda_null() {
+    double *array = NULL;
+    TEST_ASSERT(spda_len(array) == 0, "Array is empty", "Expected NULL array length to be zero");
+    TEST_ASSERT(spda_cap(array) == 0, "Array capacity is zero", "Expected NULL array capacity to be zero");
+    TEST_ASSERT(spda_stride(array) == 0, "Array stride is zero", "Expected NULL array stride to be zero");
+    spda_destroy(array);
+}
+
 void test_create() {
     printf("  Testing array creation...\n");
     double *array = spda_create(double);
@@ -389,6 +397,7 @@ int main(void) {
     RUN_TEST(test_structs);
     RUN_TEST(test_random);
     RUN_TEST(test_stress);
+    RUN_TEST(test_spda_null);
 
     printf(GREEN "\nAll %d tests passed successfully!\n" RESET, test_count);
     return 0;

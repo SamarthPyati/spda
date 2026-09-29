@@ -67,14 +67,17 @@ static inline bool _spda_is_valid(const void *array) {
 }
 
 static inline size_t spda_len(const void *array) {
+    if (!array) return 0;
     return _spda_get_header(array)->length;
 }
 
 static inline size_t spda_cap(const void *array) {
+    if (!array) return 0;
     return _spda_get_header(array)->capacity;
 }
 
 static inline size_t spda_stride(const void *array) {
+    if (!array) return 0;
     return _spda_get_header(array)->stride;
 }
 
