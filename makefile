@@ -48,11 +48,6 @@ $(MAIN_TEST): $(TEST_DIR)/test.c | $(BIN_DIR)
 $(BIN_DIR):
 	mkdir -p $@
 
-PLAYGROUND_FILE := playground/play.c
-play: $(PLAYGROUND_FILE) $(OBJ)
-	$(CC) $(CFLAGS) -I./ -o ./playground/bin/play $< $(OBJ)
-	./playground/bin/play
-
 BUILD_DL_FLAGS := -Wall -Wextra -Werror -std=c17 -shared -O3
 build_lib: $(BIN_DIR) $(OBJ)
 	$(CC) $(BUILD_DL_FLAGS) -o $(DLIB) -fPIC $(OBJ)
