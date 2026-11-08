@@ -1,59 +1,63 @@
-# Two different version's of clang clash on my machine - Apple Clang and LLVM Clang
-ifeq ($(origin cc), default)
-	CC := clang
+# Compiler selection
+# Apple clang (/usr/bin/clang) and Homebrew LLVM clang both exist on this machine.
+# Homebrew LLVM's ASan runtime deadlocks at startup on this macOS, so on Darwin
+# default to Apple clang. An explicit `make CC=...` always wins.
+ifeq ($(origin CC),default)
+  ifeq ($(shell uname),Darwin)
+    CC := /usr/bin/clang
+  else
+    CC := cc
+  endif
 endif
 
-CFLAGS := -Wall -Wextra -std=c17
-LDFLAG := -lm
+CFLAGS  := -Wall -Wextra -std=c17
+LDFLAGS := -lm
 
 ifeq ($(DEBUG),1)
-# Homebrew LLVM's ASan hangs on this macOS
-	CC      := /usr/bin/clang          
-	CFLAGS  += -g -O0 -fsanitize=address,undefined
-	LDFLAGS += -fsanitize=address,undefined
-	OUT     := bin/debug
+  SAN     := -fsanitize=address,undefined
+  CFLAGS  += -g -O0 $(SAN)
+  LDFLAGS += $(SAN)
+  OUT     := bin/debug
 else
-	CFLAGS  += -O2
-	OUT     := bin/release
+  CFLAGS  += -O2
+  OUT     := bin/release
 endif
 
-# Directories
-SRC_DIR 	:= .
-TEST_DIR 	:= tests
-BIN_DIR 	:= bin
+# Files
+HEADER := spda.h
+OBJ    := $(OUT)/spda.o
+TEST   := $(OUT)/test
 
-# Source files
-HEADER 	:= $(SRC_DIR)/spda.h
-OBJ 	:= $(BIN_DIR)/spda.o
-DLIB 	:= $(BIN_DIR)/libspda.so
-
-# Executables
-BASIC_TEST 	:= $(BIN_DIR)/basic_test
-MAIN_TEST 	:= $(BIN_DIR)/main_test
+ifeq ($(shell uname),Darwin)
+  DLIB := $(OUT)/libspda.dylib
+else
+  DLIB := $(OUT)/libspda.so
+endif
 
 # Targets
-.PHONY: all build clean build_lib
+.PHONY: all build build_lib test cleanup
 
-all: build $(BASIC_TEST) $(MAIN_TEST) $(UTILITY_TEST)
+all: build $(TEST)
 
-build: $(HEADER)
-	$(CC) $(CFLAGS) -x c -DSPDA_IMPLEMENTATION -c $< -o $(OBJ)
+build: $(OBJ)
 
-$(BASIC_TEST): $(TEST_DIR)/basic.c | $(BIN_DIR)
-	$(CC) $(CFLAGS) $^ -o $@ 
+build_lib: $(DLIB)
 
-$(MAIN_TEST): $(TEST_DIR)/test.c | $(BIN_DIR)
-	$(CC) $(CFLAGS) $^ -o $@
+test: $(TEST)
+	$<
 
-$(BIN_DIR):
+$(OUT):
 	mkdir -p $@
 
-BUILD_DL_FLAGS := -Wall -Wextra -Werror -std=c17 -shared -O3
-build_lib: $(BIN_DIR) $(OBJ)
-	$(CC) $(BUILD_DL_FLAGS) -o $(DLIB) -fPIC $(OBJ)
+# Header compiles standalone as the implementation translation unit
+$(OBJ): $(HEADER) | $(OUT)
+	$(CC) $(CFLAGS) -fPIC -x c -DSPDA_IMPLEMENTATION -c $< -o $@
 
-test: $(MAIN_TEST)
-	./$<
+$(TEST): tests/test.c $(HEADER) | $(OUT)
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS)
 
-clean:
-	@rm -rf $(BIN_DIR)
+$(DLIB): $(OBJ)
+	$(CC) -shared $< -o $@ $(LDFLAGS)
+
+cleanup:
+	rm -rf bin

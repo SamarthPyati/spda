@@ -186,7 +186,7 @@ void _printStr(void *elem);
 
 #endif // SPDA_HEADER_GUARD_H_
 
-#ifndef SPDA_IMPLEMENTATION
+#ifdef SPDA_IMPLEMENTATION
 
 void *_spda_create(size_t capacity, size_t stride) {
 	if (capacity < SPDA_DEFAULT_CAPACITY)
@@ -214,7 +214,7 @@ void *_spda_create(size_t capacity, size_t stride) {
 
 void _spda_destroy(void *array) {
 	if (!_spda_is_valid(array))
-	return;
+		return;
 	
 	spda_header_t *header = _spda_get_header(array);
 	free(header);
@@ -240,7 +240,7 @@ void *_spda_resize_def(void *array) {
 
 void *_spda_resize(void *array, size_t size) {
 	if (!_spda_is_valid(array))
-	return NULL;
+		return NULL;
 	
 	spda_header_t *header = _spda_get_header(array);
 	
@@ -264,7 +264,7 @@ void *_spda_resize(void *array, size_t size) {
 
 void *spda_shrink_to_fit(void *array) {
 	if (!_spda_is_valid(array))
-	return NULL;
+		return NULL;
 	
 	size_t len = spda_len(array);
 	size_t cap = spda_cap(array);
@@ -307,7 +307,7 @@ void *_spda_append(void *array, const void *value) {
 
 void *_spda_append_many(void *array, void *items, size_t item_count) {
 	if (!_spda_is_valid(array) || !items || item_count == 0)
-	return array;
+		return array;
 	
 	size_t len    = spda_len(array);
 	size_t cap    = spda_cap(array);
@@ -409,7 +409,7 @@ void *_spda_remove_ret(void *array, int idx, void *dest) {
 
 void _spda_reverse(void *array) {
 	if (!_spda_is_valid(array))
-	return;
+		return;
 	
 	size_t stride = spda_stride(array);
 	size_t len = spda_len(array);
