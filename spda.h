@@ -42,7 +42,21 @@ typedef struct {
     #define SPDA_DEFAULT_CAPACITY 32
 #endif 
 
-#define SPDA_GROWTH_FACTOR 1.5
+#if defined(SPDA_STATIC) && !defined(SPDA_IMPLEMENTATION)
+	#define SPDA_IMPLEMENTATION
+#endif
+
+#ifdef SPDA_STATIC
+	#if defined(__GNUC__) || defined(__clang__)
+		#define SPDA_DEF static __attribute__((unused))
+	#else
+		#define SPDA_DEF static
+	#endif
+#else
+	#define SPDA_DEF extern
+#endif
+
+#define SPDA_GROWTH_FACTOR 2
 #define SPDA_SHRINK_THRESHOLD 0.25 // if array utilisation falls below 25% shrink the capacity of array 
 
 /* ERROR HANDLING */
@@ -55,13 +69,12 @@ typedef struct {
 #define CARRAY_LEN(xs) (sizeof((xs)) / sizeof((xs)[0]))
 
 /* Core Operations */
-void *_spda_create(size_t cap, size_t stride);
-void _spda_destroy(void *array);
+SPDA_DEF void *_spda_create(size_t cap, size_t stride);
+SPDA_DEF void _spda_destroy(void *array);
 
 /* Field Operations */
 static inline spda_header_t* _spda_get_header(const void *array) {
-    if (!array) return NULL;
-    return (spda_header_t *)array - 1;
+    return array ? (spda_header_t *)array - 1 : NULL;
 }
 
 static inline bool _spda_is_valid(const void *array) {
@@ -71,62 +84,59 @@ static inline bool _spda_is_valid(const void *array) {
 }
 
 static inline size_t spda_len(const void *array) {
-    if (!array) return 0;
-    return _spda_get_header(array)->length;
+    return array ? _spda_get_header(array)->length : 0;
 }
 
 static inline size_t spda_cap(const void *array) {
-    if (!array) return 0;
-    return _spda_get_header(array)->capacity;
+    return array ? _spda_get_header(array)->capacity : 0;
 }
 
 static inline size_t spda_stride(const void *array) {
-    if (!array) return 0;
-    return _spda_get_header(array)->stride;
+    return array ? _spda_get_header(array)->stride : 0;
 }
 
 /* Memory Operations */
-void *_spda_resize_def(void *array);
-void *_spda_resize(void *array, size_t size);     
-void *spda_shrink_to_fit(void *array);
+SPDA_DEF void *_spda_resize_def(void *array);
+SPDA_DEF void *_spda_resize(void *array, size_t size);     
+SPDA_DEF void *spda_shrink_to_fit(void *array);
 
 /* Array Operations */
-void *_spda_append(void *array, const void* value);
-void *_spda_append_many(void *array, void *items, size_t item_count);
-void *_spda_insert(void *array, int idx, const void* value);
+SPDA_DEF void *_spda_append(void *array, const void* value);
+SPDA_DEF void *_spda_append_many(void *array, void *items, size_t item_count);
+SPDA_DEF void *_spda_insert(void *array, int idx, const void* value);
 
-void _spda_pop(void *array);
-bool _spda_pop_ret(void *array, void *dest);                 // return the popped item
+SPDA_DEF void _spda_pop(void *array);
+SPDA_DEF bool _spda_pop_ret(void *array, void *dest);                 // return the popped item
 
-void *_spda_remove(void *array, int idx);
-void *_spda_remove_ret(void *array, int idx, void *dest);    // return the removed item
+SPDA_DEF void *_spda_remove(void *array, int idx);
+SPDA_DEF void *_spda_remove_ret(void *array, int idx, void *dest);    // return the removed item
 
-void _spda_reverse(void *array);                             // reverse array inplace
+SPDA_DEF void _spda_reverse(void *array);                             // reverse array inplace
 
 /* Sort and search */
-void spda_sort(void *array, int (*compar)(const void *, const void *));   // qsort  
-void *spda_search(void *array, const void *target); // TODO                      
+SPDA_DEF void spda_sort(void *array, int (*compar)(const void *, const void *));   // qsort  
+/* TODO: not implemented yet; declaring it would turn a call into a link error. */
+/* SPDA_DEF void *spda_search(void *array, const void *target); */
 
 /* Utilities */ 
-void *spda_copy(void *src);
-void spda_clear(void *array);
-void spda_print(void *array, void (*spdaElemPrinter)(void *elem));
-void spda_print_metadata(void *array);
+SPDA_DEF void *spda_copy(void *src);
+SPDA_DEF void spda_print(void *array, void (*spdaElemPrinter)(void *elem));
+SPDA_DEF void spda_print_metadata(void *array);
 
 /* Random Helper Functions */ 
-int randint(int min, int max);
-float randfloat(float min, float max);
+SPDA_DEF int randint(int min, int max);
+SPDA_DEF float randfloat(float min, float max);
 
 /* Random Array Generation */
-void spda_rand(int **array, size_t n, int min, int max);                 // Populate Random int array 
-void spda_randf(float **array, size_t n, float min, float max);          // Populate Random double array 
+SPDA_DEF void spda_rand(int **array, size_t n, int min, int max);                 // Populate Random int array 
+SPDA_DEF void spda_randf(float **array, size_t n, float min, float max);          // Populate Random double array 
 
 /* Default datatype element printer */
-void _printInt(void *elem);
-void _printFloat(void *elem);
-void _printDouble(void *elem);
-void _printChar(void *elem);
-void _printStr(void *elem); 
+SPDA_DEF void _printInt(void *elem);
+SPDA_DEF void _printFloat(void *elem);
+SPDA_DEF void _printDouble(void *elem);
+SPDA_DEF void _printChar(void *elem);
+SPDA_DEF void _printStr(void *elem); 
 
 #define printInt _printInt
 #define printFloat _printFloat
@@ -186,9 +196,10 @@ void _printStr(void *elem);
 
 #endif // SPDA_HEADER_GUARD_H_
 
-#ifdef SPDA_IMPLEMENTATION
+#if defined(SPDA_IMPLEMENTATION) && !defined(SPDA_IMPLEMENTATION_GUARD_)
+#define SPDA_IMPLEMENTATION_GUARD_
 
-void *_spda_create(size_t capacity, size_t stride) {
+SPDA_DEF void *_spda_create(size_t capacity, size_t stride) {
 	if (capacity < SPDA_DEFAULT_CAPACITY)
 	capacity = SPDA_DEFAULT_CAPACITY;
 	
@@ -212,7 +223,7 @@ void *_spda_create(size_t capacity, size_t stride) {
 	return (void *)(array + 1);
 }
 
-void _spda_destroy(void *array) {
+SPDA_DEF void _spda_destroy(void *array) {
 	if (!_spda_is_valid(array))
 		return;
 	
@@ -220,7 +231,7 @@ void _spda_destroy(void *array) {
 	free(header);
 }
 
-void *_spda_resize_def(void *array) {
+SPDA_DEF void *_spda_resize_def(void *array) {
 	if (!_spda_is_valid(array))
 	return NULL;
 	
@@ -238,7 +249,7 @@ void *_spda_resize_def(void *array) {
 	return (void *)(new_header + 1);  
 }
 
-void *_spda_resize(void *array, size_t size) {
+SPDA_DEF void *_spda_resize(void *array, size_t size) {
 	if (!_spda_is_valid(array))
 		return NULL;
 	
@@ -262,7 +273,7 @@ void *_spda_resize(void *array, size_t size) {
 	return (void *)(new_header + 1);
 }
 
-void *spda_shrink_to_fit(void *array) {
+SPDA_DEF void *spda_shrink_to_fit(void *array) {
 	if (!_spda_is_valid(array))
 		return NULL;
 	
@@ -282,7 +293,7 @@ void *spda_shrink_to_fit(void *array) {
 	return array;
 }
 
-void *_spda_append(void *array, const void *value) {
+SPDA_DEF void *_spda_append(void *array, const void *value) {
 	if (!_spda_is_valid(array) || !value) {
 		SPDA_ERR("INVALID_ARGUMENT", "Invalid array or value");
 		return array;
@@ -305,7 +316,7 @@ void *_spda_append(void *array, const void *value) {
 	return array;
 }
 
-void *_spda_append_many(void *array, void *items, size_t item_count) {
+SPDA_DEF void *_spda_append_many(void *array, void *items, size_t item_count) {
 	if (!_spda_is_valid(array) || !items || item_count == 0)
 		return array;
 	
@@ -336,7 +347,7 @@ void *_spda_append_many(void *array, void *items, size_t item_count) {
 	return array;
 }
 
-void _spda_pop(void *array) {
+SPDA_DEF void _spda_pop(void *array) {
 	size_t length = spda_len(array);
 	if (length == 0) {
 		SPDA_ERR("INDEX_OUT_OF_BOUNDS", "Cannot pop elements from an empty array");
@@ -345,7 +356,7 @@ void _spda_pop(void *array) {
 	_spda_get_header(array)->length -= 1; // decrement length
 }
 
-bool _spda_pop_ret(void *array, void *dest) {
+SPDA_DEF bool _spda_pop_ret(void *array, void *dest) {
 	size_t length = spda_len(array);
 	
 	if (length == 0) {
@@ -362,7 +373,7 @@ bool _spda_pop_ret(void *array, void *dest) {
 	return true;
 }
 
-void *_spda_insert(void *array, int idx, const void *value) {
+SPDA_DEF void *_spda_insert(void *array, int idx, const void *value) {
 	size_t length = spda_len(array);
 	size_t stride = spda_stride(array);
 	size_t capacity = spda_cap(array);
@@ -380,7 +391,7 @@ void *_spda_insert(void *array, int idx, const void *value) {
 	return array;
 }
 
-void *_spda_remove(void *array, int idx) {
+SPDA_DEF void *_spda_remove(void *array, int idx) {
 	size_t length = spda_len(array);
 	size_t stride = spda_stride(array);
 	if (idx < 0 || (size_t)idx >= length) {
@@ -393,7 +404,7 @@ void *_spda_remove(void *array, int idx) {
 	return array;
 }
 
-void *_spda_remove_ret(void *array, int idx, void *dest) {
+SPDA_DEF void *_spda_remove_ret(void *array, int idx, void *dest) {
 	size_t length = spda_len(array);
 	size_t stride = spda_stride(array);
 	if (idx < 0 || (size_t)idx >= length) {
@@ -407,7 +418,7 @@ void *_spda_remove_ret(void *array, int idx, void *dest) {
 	return array;
 }
 
-void _spda_reverse(void *array) {
+SPDA_DEF void _spda_reverse(void *array) {
 	if (!_spda_is_valid(array))
 		return;
 	
@@ -430,7 +441,7 @@ void _spda_reverse(void *array) {
 	free(temp);
 }
 
-void *spda_copy(void *src) {
+SPDA_DEF void *spda_copy(void *src) {
 	if (src == NULL) {
 		SPDA_ERR("INVALID_SOURCE", "Source array cannot be NULL");
 		return NULL;
@@ -456,7 +467,7 @@ void *spda_copy(void *src) {
 	return (void *)_dst;
 }
 
-void spda_sort(void *array, int (*compar)(const void *, const void *)) {
+SPDA_DEF void spda_sort(void *array, int (*compar)(const void *, const void *)) {
 	if (!array) {
 		SPDA_ERR("INVALID_SOURCE", "Source array cannot be NULL");
 		exit(EXIT_FAILURE);
@@ -468,7 +479,7 @@ void spda_sort(void *array, int (*compar)(const void *, const void *)) {
 	qsort(array, length, stride, compar);
 }
 
-void spda_print_metadata(void *array) {
+SPDA_DEF void spda_print_metadata(void *array) {
 	if (!array) {
 		SPDA_ERR("INVALID_SOURCE", "Source array cannot be NULL");
 		exit(EXIT_FAILURE);
@@ -478,7 +489,7 @@ void spda_print_metadata(void *array) {
 	spda_len(array), spda_stride(array) * 8);
 }
 
-void spda_print(void *array, void (*spdaElemPrinter)(void *elem)) {
+SPDA_DEF void spda_print(void *array, void (*spdaElemPrinter)(void *elem)) {
 	for (size_t i = 0; i < spda_len(array); ++i) {
 		void *p = ((char *)array + i * spda_stride(array));
 		spdaElemPrinter(p);
@@ -487,38 +498,38 @@ void spda_print(void *array, void (*spdaElemPrinter)(void *elem)) {
 }
 
 /* Default `spdaElemPrinter` functions for convenience */
-void _printInt(void *elem) { printf("%d ", *(int *)elem); }
+SPDA_DEF void _printInt(void *elem) { printf("%d ", *(int *)elem); }
 
-void _printFloat(void *elem) { printf("%f ", *(float *)elem); }
+SPDA_DEF void _printFloat(void *elem) { printf("%f ", *(float *)elem); }
 
-void _printDouble(void *elem) { printf("%lf ", *(double *)elem); }
+SPDA_DEF void _printDouble(void *elem) { printf("%lf ", *(double *)elem); }
 
-void _printChar(void *elem) { printf("%c ", *(char *)elem); }
+SPDA_DEF void _printChar(void *elem) { printf("%c ", *(char *)elem); }
 
-void _printStr(void *elem) { printf("%s\n", *(const char **)elem); }
+SPDA_DEF void _printStr(void *elem) { printf("%s\n", *(const char **)elem); }
 
 /* Random Function Utilities */
-int randint(int min, int max) { return rand() % (max - min + 1) + min; }
+SPDA_DEF int randint(int min, int max) { return rand() % (max - min + 1) + min; }
 
-float randfloat(float min, float max) {
+SPDA_DEF float randfloat(float min, float max) {
 	float f;
 	f = ((float)rand() / ((float)RAND_MAX + 1));
 	return (min + f * (max - min));
 }
 
 /* Generating random arrays */
-void spda_rand(int **array, size_t n, int min, int max) {
+SPDA_DEF void spda_rand(int **array, size_t n, int min, int max) {
 	for (size_t i = 0; i < n; ++i) {
 		int random_value = randint(min, max);
 		*array = _spda_append(*array, &random_value);
 	}
 }
 
-void spda_randf(float **array, size_t n, float min, float max) {
+SPDA_DEF void spda_randf(float **array, size_t n, float min, float max) {
 	for (size_t i = 0; i < n; ++i) {
 		float random_value = randfloat(min, max);
 		*array = _spda_append(*array, &random_value);
 	}
 }
 
-#endif // SPDA_IMPLEMENTATION
+#endif // SPDA_IMPLEMENTATION_GUARD_
