@@ -1,6 +1,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+
+#define SPDA_IMPLEMENTATION
 #include "../spda.h"
 
 typedef struct 

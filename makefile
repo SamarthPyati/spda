@@ -1,57 +1,64 @@
-CC := clang
-CFLAGS := -Wall -Wextra -std=c17
-LDFLAGS := -lm
+# Two different version's of clang clash on my machine - Apple Clang and LLVM Clang
+ifeq ($(origin cc), default)
+	CC := clang
+endif
 
-DEBUG_FLAGS := -fsanitize=address,undefined -g
+CFLAGS := -Wall -Wextra -std=c17
+LDFLAG := -lm
 
 ifeq ($(DEBUG),1)
-	CFLAGS += $(DEBUG_FLAGS)
+# Homebrew LLVM's ASan hangs on this macOS
+	CC      := /usr/bin/clang          
+	CFLAGS  += -g -O0 -fsanitize=address,undefined
+	LDFLAGS += -fsanitize=address,undefined
+	OUT     := bin/debug
+else
+	CFLAGS  += -O2
+	OUT     := bin/release
 endif
 
 # Directories
 SRC_DIR 	:= .
 TEST_DIR 	:= tests
 BIN_DIR 	:= bin
-BUILD_DIR 	:= build
 
 # Source files
-SRC 	:= $(SRC_DIR)/spda.c
 HEADER 	:= $(SRC_DIR)/spda.h
-OBJ 	:= $(SRC_DIR)/spda.o
-DLIB 	:= $(BUILD_DIR)/libspda.so
+OBJ 	:= $(BIN_DIR)/spda.o
+DLIB 	:= $(BIN_DIR)/libspda.so
 
 # Executables
 BASIC_TEST 	:= $(BIN_DIR)/basic_test
 MAIN_TEST 	:= $(BIN_DIR)/main_test
 
 # Targets
-.PHONY: all clean build_lib
+.PHONY: all build clean build_lib
 
-all: $(BASIC_TEST) $(MAIN_TEST) $(UTILITY_TEST)
+all: build $(BASIC_TEST) $(MAIN_TEST) $(UTILITY_TEST)
 
-$(BASIC_TEST): $(SRC) $(TEST_DIR)/basic.c $(HEADER) | $(BIN_DIR)
-	$(CC) $(CFLAGS) $< $(TEST_DIR)/basic.c -o $@ $(LDFLAGS)
+build: $(HEADER)
+	$(CC) $(CFLAGS) -x c -DSPDA_IMPLEMENTATION -c $< -o $(OBJ)
 
-$(MAIN_TEST): $(SRC) $(TEST_DIR)/test.c $(HEADER) | $(BIN_DIR)
-	$(CC) $(CFLAGS) $< $(TEST_DIR)/test.c -o $@ $(LDFLAGS)
+$(BASIC_TEST): $(TEST_DIR)/basic.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) $^ -o $@ 
+
+$(MAIN_TEST): $(TEST_DIR)/test.c | $(BIN_DIR)
+	$(CC) $(CFLAGS) $^ -o $@
 
 $(BIN_DIR):
 	mkdir -p $@
 
-$(BUILD_DIR):
-	mkdir -p $@
-
 PLAYGROUND_FILE := playground/play.c
-play: $(PLAYGROUND_FILE)
-	$(CC) $(CFLAGS) -I./ -o ./playground/bin/play $< $(SRC)
+play: $(PLAYGROUND_FILE) $(OBJ)
+	$(CC) $(CFLAGS) -I./ -o ./playground/bin/play $< $(OBJ)
 	./playground/bin/play
 
 BUILD_DL_FLAGS := -Wall -Wextra -Werror -std=c17 -shared -O3
-build_lib: $(BUILD_DIR) | $(BUILD_DIR)
-	$(CC) $(BUILD_DL_FLAGS) -o $(DLIB) -fPIC $(SRC)
+build_lib: $(BIN_DIR) $(OBJ)
+	$(CC) $(BUILD_DL_FLAGS) -o $(DLIB) -fPIC $(OBJ)
 
 test: $(MAIN_TEST)
 	./$<
 
 clean:
-	rm -rf $(BIN_DIR) $(BUILD_DIR)
+	@rm -rf $(BIN_DIR)

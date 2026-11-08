@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#define SPDA_IMPLEMENTATION
 #include "../spda.h"
 
 #define RED     "\x1B[31m"
