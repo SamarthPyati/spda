@@ -43,8 +43,7 @@ build: $(OBJ)
 
 build_lib: $(DLIB)
 
-test: $(TEST)
-	$<
+test: $(TEST) ; $(TEST) $(T)
 
 $(OUT):
 	mkdir -p $@
