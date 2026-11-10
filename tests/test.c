@@ -770,6 +770,129 @@ TEST(remove_range, structs) {
 }
 
 /* ======================================================================== */
+/* Swap remove                                                              */
+/* ======================================================================== */
+
+TEST(swap_remove, front_takes_last) {
+    int *a = make_seq(5);
+    CHECK(spda_swap_remove(a, 0));
+    CHECK_INTS(a, 4, 1, 2, 3);
+    CHECK_INVARIANTS(a);
+    spda_destroy(a);
+}
+
+TEST(swap_remove, middle_takes_last) {
+    int *a = make_seq(5);
+    CHECK(spda_swap_remove(a, 2));
+    CHECK_INTS(a, 0, 1, 4, 3);
+    spda_destroy(a);
+}
+
+/* Removing the last element must behave like pop (slot == last path). */
+TEST(swap_remove, last_element_is_plain_pop) {
+    int *a = make_seq(4);
+    CHECK(spda_swap_remove(a, 3));
+    CHECK_INTS(a, 0, 1, 2);
+    spda_destroy(a);
+}
+
+TEST(swap_remove, single_element_array) {
+    int *a = make_seq(1);
+    CHECK(spda_swap_remove(a, 0));
+    CHECK_EQ(spda_len(a), 0);
+    spda_append(a, 7);
+    CHECK_INTS(a, 7);
+    spda_destroy(a);
+}
+
+TEST(swap_remove, into_returns_removed_value) {
+    int *a = make_seq(5);
+    int out = -1;
+    CHECK(spda_swap_remove_into(a, 1, &out));
+    CHECK_EQ(out, 1);
+    CHECK_INTS(a, 0, 4, 2, 3);
+    spda_destroy(a);
+}
+
+/* dest must be captured before the gap is overwritten by the last element. */
+TEST(swap_remove, into_last_returns_last_value) {
+    int *a = make_seq(3);
+    int out = -1;
+    CHECK(spda_swap_remove_into(a, 2, &out));
+    CHECK_EQ(out, 2);
+    CHECK_INTS(a, 0, 1);
+    spda_destroy(a);
+}
+
+TEST(swap_remove, out_of_bounds_is_rejected) {
+    int *a = make_seq(3);
+    int out = 1234;
+    CHECK(!spda_swap_remove(a, 3));
+    CHECK(!spda_swap_remove(a, SIZE_MAX));
+    CHECK(!spda_swap_remove_into(a, 5, &out));
+    CHECK_EQ(out, 1234);
+    CHECK_INTS(a, 0, 1, 2);
+    spda_destroy(a);
+}
+
+TEST(swap_remove, on_empty_is_rejected) {
+    int *a = spda_create(int);
+    CHECK(!spda_swap_remove(a, 0));
+    CHECK_EQ(spda_len(a), 0);
+    spda_destroy(a);
+}
+
+TEST(swap_remove, null_array_is_safe) {
+    int *a = NULL;
+    int out = 1234;
+    CHECK(!spda_swap_remove(a, 0));
+    CHECK(!spda_swap_remove_into(a, 0, &out));
+    CHECK_EQ(out, 1234);
+}
+
+/* Order may change, but the multiset of survivors must be exact. */
+TEST(swap_remove, preserves_remaining_elements) {
+    enum { N = 40 };
+    int *a = make_seq(N);
+    bool removed[N] = {0};
+    for (size_t k = 0; k < N / 2; k++) {
+        size_t idx = (k * 7) % spda_len(a);
+        removed[a[idx]] = true;
+        REQUIRE(spda_swap_remove(a, idx));
+    }
+    REQUIRE(spda_len(a) == N / 2);
+    int seen[N] = {0};
+    for (size_t i = 0; i < spda_len(a); i++) {
+        REQUIRE(a[i] >= 0 && a[i] < N);
+        seen[a[i]]++;
+    }
+    for (int v = 0; v < N; v++) CHECK_EQ(seen[v], removed[v] ? 0 : 1);
+    spda_destroy(a);
+}
+
+TEST(swap_remove, until_empty) {
+    int *a = make_seq(25);
+    while (spda_len(a) > 0) REQUIRE(spda_swap_remove(a, 0));
+    CHECK_EQ(spda_len(a), 0);
+    CHECK_INVARIANTS(a);
+    spda_destroy(a);
+}
+
+TEST(swap_remove, structs) {
+    Person *p = spda_create(Person);
+    for (int i = 0; i < 4; i++) spda_append(p, ((Person){.id = i}));
+    Person out = {.id = -1};
+    REQUIRE(spda_swap_remove_into(p, 1, &out));
+    CHECK_EQ(out.id, 1);
+    REQUIRE(spda_len(p) == 3);
+    CHECK_EQ(p[0].id, 0);
+    CHECK_EQ(p[1].id, 3);
+    CHECK_EQ(p[2].id, 2);
+    CHECK_INVARIANTS(p);
+    spda_destroy(p);
+}
+
+/* ======================================================================== */
 /* Pop                                                                      */
 /* ======================================================================== */
 

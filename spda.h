@@ -106,6 +106,7 @@ SPDA_DEF void *_spda_append_many(void *array, void *items, size_t item_count);
 SPDA_DEF void *_spda_insert(void *array, int idx, const void* value);
 
 SPDA_DEF bool _spda_remove(void *array, size_t idx, size_t count, void *dest);
+SPDA_DEF bool _spda_swap_remove(void *array, size_t idx, void *dest);
 
 SPDA_DEF void _spda_reverse(void *array);                             // reverse array inplace
 
@@ -178,6 +179,9 @@ SPDA_DEF void _printStr(void *elem);
 #define spda_remove(array, idx) 			_spda_remove((array), (idx), 1, NULL)
 #define spda_remove_into(array, idx, dest)  _spda_remove((array), (idx), 1, (dest))
 #define spda_remove_range(array, idx, n)	_spda_remove((array), (idx), (n), NULL)
+
+#define spda_swap_remove(array, idx)             _spda_swap_remove((array), (idx), NULL)
+#define spda_swap_remove_into(array, idx, dest)  _spda_swap_remove((array), (idx), (dest))
 
 #define spda_pop(array) 					_spda_remove((array), spda_len(array) - 1, 1, NULL)
 #define spda_pop_into(array, dest) 			_spda_remove((array), spda_len(array) - 1, 1, (dest))
@@ -392,6 +396,30 @@ SPDA_DEF bool _spda_remove(void *array, size_t idx, size_t count, void *dest) {
 
 	_spda_get_header(array)->length -= count;
 	return true;
+}
+
+SPDA_DEF bool _spda_swap_remove(void *array, size_t idx, void *dest) {
+    if (!_spda_is_valid(array)) {
+        SPDA_ERR("INVALID_ARRAY", "Pointer not a spda compatible dynamic array.");
+        return false;
+    }
+
+    size_t length = spda_len(array);
+    size_t stride = spda_stride(array);
+
+    if (idx >= length) {
+        SPDA_ERR("INDEX_OUT_OF_BOUNDS", "Index out of bounds for swap remove");
+        return false;
+    }
+
+    char *slot = (char *)array + idx * stride;
+    char *last = (char *)array + (length - 1) * stride;
+
+    if (dest) memcpy(dest, slot, stride);   // hand back the removed element
+    if (slot != last) memcpy(slot, last, stride);  // fill the gap with the last one
+
+    _spda_get_header(array)->length -= 1;
+    return true;
 }
 
 SPDA_DEF void _spda_reverse(void *array) {
