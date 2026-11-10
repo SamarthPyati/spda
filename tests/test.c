@@ -348,14 +348,14 @@ TEST(null, insert_does_not_crash) {
 TEST(null, pop_is_safe) {
     int *a = NULL, out = 7;
     spda_pop(a);
-    CHECK(!spda_pop_ret(a, &out));
+    CHECK(!spda_pop_into(a, &out));
     CHECK_EQ(out, 7);
 }
 
 TEST(null, remove_is_safe) {
     int *a = NULL, out = 7;
     spda_remove(a, 0);
-    spda_remove_ret(a, 0, &out);
+    spda_remove_into(a, 0, &out);
     CHECK_EQ(out, 7);
 }
 
@@ -635,7 +635,7 @@ TEST(remove, until_empty) {
 TEST(remove_ret, returns_removed_value) {
     int *a = make_seq(5);
     int out = -1;
-    spda_remove_ret(a, 3, &out);
+    spda_remove_into(a, 3, &out);
     CHECK_EQ(out, 3);
     CHECK_INTS(a, 0, 1, 2, 4);
     spda_destroy(a);
@@ -644,7 +644,7 @@ TEST(remove_ret, returns_removed_value) {
 TEST(remove_ret, out_of_bounds_leaves_dest_untouched) {
     int *a = make_seq(2);
     int out = 1234;
-    spda_remove_ret(a, 5, &out);
+    spda_remove_into(a, 5, &out);
     CHECK_EQ(out, 1234);
     CHECK_INTS(a, 0, 1);
     spda_destroy(a);
@@ -652,9 +652,121 @@ TEST(remove_ret, out_of_bounds_leaves_dest_untouched) {
 
 TEST(remove_ret, null_dest_discards_value) {
     int *a = make_seq(3);
-    spda_remove_ret(a, 1, NULL);
+    spda_remove_into(a, 1, NULL);
     CHECK_INTS(a, 0, 2);
     spda_destroy(a);
+}
+
+/* ======================================================================== */
+/* Remove range                                                             */
+/* ======================================================================== */
+
+TEST(remove_range, front) {
+    int *a = make_seq(6);
+    CHECK(spda_remove_range(a, 0, 2));
+    CHECK_INTS(a, 2, 3, 4, 5);
+    CHECK_INVARIANTS(a);
+    spda_destroy(a);
+}
+
+TEST(remove_range, middle) {
+    int *a = make_seq(8);
+    CHECK(spda_remove_range(a, 2, 3));
+    CHECK_INTS(a, 0, 1, 5, 6, 7);
+    CHECK_INVARIANTS(a);
+    spda_destroy(a);
+}
+
+TEST(remove_range, back) {
+    int *a = make_seq(6);
+    CHECK(spda_remove_range(a, 3, 3));
+    CHECK_INTS(a, 0, 1, 2);
+    spda_destroy(a);
+}
+
+TEST(remove_range, entire_array) {
+    int *a = make_seq(5);
+    CHECK(spda_remove_range(a, 0, 5));
+    CHECK_EQ(spda_len(a), 0);
+    spda_append(a, 9);
+    CHECK_INTS(a, 9);
+    spda_destroy(a);
+}
+
+TEST(remove_range, single_element_matches_remove) {
+    int *a = make_seq(5);
+    int *b = make_seq(5);
+    spda_remove_range(a, 2, 1);
+    spda_remove(b, 2);
+    REQUIRE(spda_len(a) == spda_len(b));
+    for (size_t i = 0; i < spda_len(a); i++) CHECK_EQ(a[i], b[i]);
+    spda_destroy(a);
+    spda_destroy(b);
+}
+
+TEST(remove_range, zero_count_is_noop) {
+    int *a = make_seq(4);
+    spda_remove_range(a, 1, 0);
+    CHECK_INTS(a, 0, 1, 2, 3);
+    spda_destroy(a);
+}
+
+/* Range starts in bounds but runs past the end: must be rejected whole,
+   not partially applied, and must not underflow the length. */
+TEST(remove_range, overrunning_end_is_rejected) {
+    int *a = make_seq(5);
+    CHECK(!spda_remove_range(a, 3, 5));
+    CHECK_INTS(a, 0, 1, 2, 3, 4);
+    CHECK_INVARIANTS(a);
+    spda_destroy(a);
+}
+
+TEST(remove_range, start_out_of_bounds_is_rejected) {
+    int *a = make_seq(3);
+    CHECK(!spda_remove_range(a, 3, 1));
+    CHECK(!spda_remove_range(a, 10, 2));
+    CHECK_INTS(a, 0, 1, 2);
+    spda_destroy(a);
+}
+
+/* idx + count wraps around SIZE_MAX; a naive `idx + count > len` check
+   would pass and corrupt memory. */
+TEST(remove_range, count_overflow_is_rejected) {
+    int *a = make_seq(4);
+    CHECK(!spda_remove_range(a, 1, SIZE_MAX));
+    CHECK(!spda_remove_range(a, 2, SIZE_MAX - 1));
+    CHECK_INTS(a, 0, 1, 2, 3);
+    spda_destroy(a);
+}
+
+TEST(remove_range, on_empty_is_rejected) {
+    int *a = spda_create(int);
+    CHECK(!spda_remove_range(a, 0, 1));
+    CHECK_EQ(spda_len(a), 0);
+    spda_destroy(a);
+}
+
+TEST(remove_range, null_array_is_safe) {
+    int *a = NULL;
+    CHECK(!spda_remove_range(a, 0, 1));
+}
+
+TEST(remove_range, repeated_until_empty) {
+    int *a = make_seq(30);
+    while (spda_len(a) >= 4) REQUIRE(spda_remove_range(a, 1, 3));
+    CHECK_INTS(a, 0, 28, 29);
+    spda_destroy(a);
+}
+
+TEST(remove_range, structs) {
+    Person *p = spda_create(Person);
+    for (int i = 0; i < 6; i++) spda_append(p, ((Person){.id = i}));
+    REQUIRE(spda_remove_range(p, 1, 4));
+    REQUIRE(spda_len(p) == 2);
+    CHECK_EQ(p[0].id, 0);
+    CHECK_EQ(p[1].id, 5);
+    CHECK_INVARIANTS(p);
+    spda_destroy(p);
 }
 
 /* ======================================================================== */
@@ -672,7 +784,7 @@ TEST(pop, returns_in_lifo_order) {
     int *a = make_seq(5);
     int out;
     for (int expect = 4; expect >= 0; expect--) {
-        REQUIRE(spda_pop_ret(a, &out));
+        REQUIRE(spda_pop_into(a, &out));
         CHECK_EQ(out, expect);
     }
     CHECK_EQ(spda_len(a), 0);
@@ -681,7 +793,7 @@ TEST(pop, returns_in_lifo_order) {
 
 TEST(pop, null_dest_discards_value) {
     int *a = make_seq(2);
-    CHECK(spda_pop_ret(a, NULL));
+    CHECK(spda_pop_into(a, NULL));
     CHECK_INTS(a, 0);
     spda_destroy(a);
 }
@@ -689,7 +801,7 @@ TEST(pop, null_dest_discards_value) {
 TEST(pop, on_empty_returns_false) {
     int *a = spda_create(int);
     int out = 77;
-    CHECK(!spda_pop_ret(a, &out));
+    CHECK(!spda_pop_into(a, &out));
     CHECK_EQ(out, 77);
     spda_pop(a);
     CHECK_EQ(spda_len(a), 0);
@@ -1061,7 +1173,7 @@ TEST(fuzz, matches_reference_model) {
             if (n) {
                 size_t i = (size_t)rand() % n;
                 int out = 0;
-                spda_remove_ret(a, (int)i, &out);
+                spda_remove_into(a, (int)i, &out);
                 REQUIRE(out == model[i]);
                 memmove(model + i, model + i + 1, (n - i - 1) * sizeof(int));
                 n--;
@@ -1070,7 +1182,7 @@ TEST(fuzz, matches_reference_model) {
         case 5:                                                  /* pop_ret */
             if (n) {
                 int out = 0;
-                REQUIRE(spda_pop_ret(a, &out));
+                REQUIRE(spda_pop_into(a, &out));
                 REQUIRE(out == model[--n]);
             }
             break;

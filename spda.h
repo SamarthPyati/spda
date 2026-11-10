@@ -105,11 +105,7 @@ SPDA_DEF void *_spda_append(void *array, const void* value);
 SPDA_DEF void *_spda_append_many(void *array, void *items, size_t item_count);
 SPDA_DEF void *_spda_insert(void *array, int idx, const void* value);
 
-SPDA_DEF void _spda_pop(void *array);
-SPDA_DEF bool _spda_pop_ret(void *array, void *dest);                 // return the popped item
-
-SPDA_DEF void *_spda_remove(void *array, int idx);
-SPDA_DEF void *_spda_remove_ret(void *array, int idx, void *dest);    // return the removed item
+SPDA_DEF bool _spda_remove(void *array, size_t idx, size_t count, void *dest);
 
 SPDA_DEF void _spda_reverse(void *array);                             // reverse array inplace
 
@@ -170,9 +166,6 @@ SPDA_DEF void _printStr(void *elem);
             (array) = _spda_append_many((array), (items), (count));       \
     } while (0)
 
-#define spda_pop(array) _spda_pop(array)
-#define spda_pop_ret(array, dest) _spda_pop_ret(array, dest)
-
 #define spda_foreach(type, varname, array) \
     for (type *varname = (array); varname != (array) + spda_len(array); ++varname)
 
@@ -182,8 +175,12 @@ SPDA_DEF void _printStr(void *elem);
         (array) = _spda_insert((array), (idx), &spda__tmp_); \
     } while (0)
 
-#define spda_remove(array, idx) _spda_remove((array), idx)
-#define spda_remove_ret(array, idx, dest) _spda_remove_ret((array), idx, dest)
+#define spda_remove(array, idx) 			_spda_remove((array), (idx), 1, NULL)
+#define spda_remove_into(array, idx, dest)  _spda_remove((array), (idx), 1, (dest))
+#define spda_remove_range(array, idx, n)	_spda_remove((array), (idx), (n), NULL)
+
+#define spda_pop(array) 					_spda_remove((array), spda_len(array) - 1, 1, NULL)
+#define spda_pop_into(array, dest) 			_spda_remove((array), spda_len(array) - 1, 1, (dest))
 
 #define spda_reverse(array) \
     _spda_reverse((array))
@@ -347,32 +344,6 @@ SPDA_DEF void *_spda_append_many(void *array, void *items, size_t item_count) {
 	return array;
 }
 
-SPDA_DEF void _spda_pop(void *array) {
-	size_t length = spda_len(array);
-	if (length == 0) {
-		SPDA_ERR("INDEX_OUT_OF_BOUNDS", "Cannot pop elements from an empty array");
-		return;
-	}
-	_spda_get_header(array)->length -= 1; // decrement length
-}
-
-SPDA_DEF bool _spda_pop_ret(void *array, void *dest) {
-	size_t length = spda_len(array);
-	
-	if (length == 0) {
-		SPDA_ERR("INDEX_OUT_OF_BOUNDS", "Cannot pop elements from an empty array");
-		return false;
-	}
-	
-	if (dest) {
-		size_t stride = spda_stride(array);
-		memcpy(dest, (char *)array + ((length - 1) * stride), stride);
-	}
-	
-	_spda_get_header(array)->length -= 1; // decrement length
-	return true;
-}
-
 SPDA_DEF void *_spda_insert(void *array, int idx, const void *value) {
 	size_t length = spda_len(array);
 	size_t stride = spda_stride(array);
@@ -391,36 +362,43 @@ SPDA_DEF void *_spda_insert(void *array, int idx, const void *value) {
 	return array;
 }
 
-SPDA_DEF void *_spda_remove(void *array, int idx) {
-	size_t length = spda_len(array);
-	size_t stride = spda_stride(array);
-	if (idx < 0 || (size_t)idx >= length) {
-		SPDA_ERR("INDEX_OUT_OF_BOUNDS", "Index out of bounds for remove");
-		return array;
+SPDA_DEF bool _spda_remove(void *array, size_t idx, size_t count, void *dest) {
+	if (!_spda_is_valid(array)) {
+		SPDA_ERR("INVALID_ARRAY", "Pointer not a spda compatible dynamic array.");
+		return false;
 	}
-	memmove((char *)array + idx * stride, (char *)array + (idx + 1) * stride,
-	(length - idx - 1) * stride);
-	_spda_get_header(array)->length -= 1;
-	return array;
-}
 
-SPDA_DEF void *_spda_remove_ret(void *array, int idx, void *dest) {
 	size_t length = spda_len(array);
 	size_t stride = spda_stride(array);
-	if (idx < 0 || (size_t)idx >= length) {
-		SPDA_ERR("INDEX_OUT_OF_BOUNDS", "Index out of bounds for remove");
-		return array;
+
+	if (idx >= length) {
+		SPDA_ERR("INDEX_OUT_OF_BOUNDS", "Start index out of bounds for remove.");
+		return false;
 	}
-	memcpy(dest, (char *)array + idx * stride, stride);
-	memmove((char *)array + idx * stride, (char *)array + (idx + 1) * stride,
-	(length - idx - 1) * stride);
-	_spda_get_header(array)->length -= 1;
-	return array;
+	
+	if (count > length - idx) {
+		SPDA_ERR("INDEX_OUT_OF_BOUNDS", "Range exceeds array length for remove.");
+		return false;
+	} 
+	
+	if (count == 0) return true;	// Nothing to be done
+
+	if (dest) {
+		memcpy(dest, (char *)array + idx * stride, count * stride);
+	}
+
+	memmove((char *)array + idx * stride, (char *)array + (idx + count) * stride,
+	(length - idx - count) * stride);
+
+	_spda_get_header(array)->length -= count;
+	return true;
 }
 
 SPDA_DEF void _spda_reverse(void *array) {
-	if (!_spda_is_valid(array))
+	if (!_spda_is_valid(array)) {
+		SPDA_ERR("INVALID_ARRAY", "Pointer not a spda compatible dynamic array.");
 		return;
+	}
 	
 	size_t stride = spda_stride(array);
 	size_t len = spda_len(array);
@@ -442,8 +420,8 @@ SPDA_DEF void _spda_reverse(void *array) {
 }
 
 SPDA_DEF void *spda_copy(void *src) {
-	if (src == NULL) {
-		SPDA_ERR("INVALID_SOURCE", "Source array cannot be NULL");
+	if (!_spda_is_valid(src)) {
+		SPDA_ERR("INVALID_ARRAY", "Pointer not a spda compatible dynamic array.");
 		return NULL;
 	}
 	
@@ -480,10 +458,11 @@ SPDA_DEF void spda_sort(void *array, int (*compar)(const void *, const void *)) 
 }
 
 SPDA_DEF void spda_print_metadata(void *array) {
-	if (!array) {
-		SPDA_ERR("INVALID_SOURCE", "Source array cannot be NULL");
-		exit(EXIT_FAILURE);
+	if (!_spda_is_valid(array)) {
+		SPDA_ERR("INVALID_ARRAY", "Provided pointer is not a spda compatible dynamic array.");
+		return;
 	}
+
 	/* Printing the Metadata of the array */
 	printf("Capacity: %zu, Length: %zu, Stride (bits): %zu\n", spda_cap(array),
 	spda_len(array), spda_stride(array) * 8);
