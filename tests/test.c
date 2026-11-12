@@ -1226,47 +1226,6 @@ TEST(layout, elements_aligned_for_any_type) {
 }
 
 /* ======================================================================== */
-/* Random helpers                                                           */
-/* ======================================================================== */
-
-TEST(random, randint_stays_in_range) {
-    srand(1);
-    for (int i = 0; i < 10000; i++) {
-        int r = randint(-5, 5);
-        REQUIRE(r >= -5 && r <= 5);
-    }
-}
-
-TEST(random, randint_single_value_range) {
-    for (int i = 0; i < 100; i++) REQUIRE(randint(7, 7) == 7);
-}
-
-TEST(random, randfloat_stays_in_range) {
-    srand(2);
-    for (int i = 0; i < 10000; i++) {
-        float f = randfloat(1.0f, 2.0f);
-        REQUIRE(f >= 1.0f && f <= 2.0f);
-    }
-}
-
-TEST(random, spda_rand_appends_n_values) {
-    int *a = make_seq(3);
-    spda_rand(&a, 100, 10, 20);
-    REQUIRE(spda_len(a) == 103);
-    CHECK(a[0] == 0 && a[1] == 1 && a[2] == 2);   /* existing values kept */
-    for (size_t i = 3; i < spda_len(a); i++) REQUIRE(a[i] >= 10 && a[i] <= 20);
-    spda_destroy(a);
-}
-
-TEST(random, spda_randf_appends_n_values) {
-    float *a = spda_create(float);
-    spda_randf(&a, 50, -1.0f, 1.0f);
-    REQUIRE(spda_len(a) == 50);
-    for (size_t i = 0; i < 50; i++) REQUIRE(a[i] >= -1.0f && a[i] <= 1.0f);
-    spda_destroy(a);
-}
-
-/* ======================================================================== */
 /* Randomised comparison against a plain C array                            */
 /* ======================================================================== */
 

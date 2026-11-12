@@ -11,7 +11,7 @@ ifeq ($(origin CC),default)
 endif
 
 CFLAGS  := -Wall -Wextra -std=c17
-LDFLAGS := -lm
+LDFLAGS :=
 
 ifeq ($(DEBUG),1)
   SAN     := -fsanitize=address,undefined

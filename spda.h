@@ -115,18 +115,10 @@ SPDA_DEF void spda_sort(void *array, int (*compar)(const void *, const void *));
 /* TODO: not implemented yet; declaring it would turn a call into a link error. */
 /* SPDA_DEF void *spda_search(void *array, const void *target); */
 
-/* Utilities */ 
+/* Utilities */
 SPDA_DEF void *spda_copy(void *src);
 SPDA_DEF void spda_print(void *array, void (*spdaElemPrinter)(void *elem));
 SPDA_DEF void spda_print_metadata(void *array);
-
-/* Random Helper Functions */ 
-SPDA_DEF int randint(int min, int max);
-SPDA_DEF float randfloat(float min, float max);
-
-/* Random Array Generation */
-SPDA_DEF void spda_rand(int **array, size_t n, int min, int max);                 // Populate Random int array 
-SPDA_DEF void spda_randf(float **array, size_t n, float min, float max);          // Populate Random double array 
 
 /* Default datatype element printer */
 SPDA_DEF void _printInt(void *elem);
@@ -533,29 +525,5 @@ SPDA_DEF void _printDouble(void *elem) { printf("%lf ", *(double *)elem); }
 SPDA_DEF void _printChar(void *elem) { printf("%c ", *(char *)elem); }
 
 SPDA_DEF void _printStr(void *elem) { printf("%s\n", *(const char **)elem); }
-
-/* Random Function Utilities */
-SPDA_DEF int randint(int min, int max) { return rand() % (max - min + 1) + min; }
-
-SPDA_DEF float randfloat(float min, float max) {
-	float f;
-	f = ((float)rand() / ((float)RAND_MAX + 1));
-	return (min + f * (max - min));
-}
-
-/* Generating random arrays */
-SPDA_DEF void spda_rand(int **array, size_t n, int min, int max) {
-	for (size_t i = 0; i < n; ++i) {
-		int random_value = randint(min, max);
-		*array = _spda_append(*array, &random_value);
-	}
-}
-
-SPDA_DEF void spda_randf(float **array, size_t n, float min, float max) {
-	for (size_t i = 0; i < n; ++i) {
-		float random_value = randfloat(min, max);
-		*array = _spda_append(*array, &random_value);
-	}
-}
 
 #endif // SPDA_IMPLEMENTATION_GUARD_
