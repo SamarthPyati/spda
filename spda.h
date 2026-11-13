@@ -77,12 +77,6 @@ static inline spda_header_t* _spda_get_header(const void *array) {
     return array ? (spda_header_t *)array - 1 : NULL;
 }
 
-static inline bool _spda_is_valid(const void *array) {
-    if (!array) return false;
-    spda_header_t *header = _spda_get_header(array);
-    return header && header->stride > 0;
-}
-
 static inline size_t spda_len(const void *array) {
     return array ? _spda_get_header(array)->length : 0;
 }
@@ -93,6 +87,10 @@ static inline size_t spda_cap(const void *array) {
 
 static inline size_t spda_stride(const void *array) {
     return array ? _spda_get_header(array)->stride : 0;
+}
+
+static inline bool _spda_is_valid(const void *array) {
+	return spda_stride(array) > 0;
 }
 
 /* Memory Operations */
@@ -117,28 +115,35 @@ SPDA_DEF void spda_sort(void *array, int (*compar)(const void *, const void *));
 
 /* Utilities */
 SPDA_DEF void *spda_copy(void *src);
-SPDA_DEF void spda_print(void *array, void (*spdaElemPrinter)(void *elem));
-SPDA_DEF void spda_print_metadata(void *array);
+
+typedef void (*spda_elem_fn)(FILE *f, const void *elem);
+SPDA_DEF void _spda_fprint(FILE *out, const void *array, spda_elem_fn pfn);
 
 /* Default datatype element printer */
-SPDA_DEF void _printInt(void *elem);
-SPDA_DEF void _printFloat(void *elem);
-SPDA_DEF void _printDouble(void *elem);
-SPDA_DEF void _printChar(void *elem);
-SPDA_DEF void _printStr(void *elem); 
-
-#define printInt _printInt
-#define printFloat _printFloat
-#define printDouble _printDouble
-#define printChar _printChar
-#define printStr _printStr
+SPDA_DEF void spda_fmt_bool(FILE *o, const void *e);
+SPDA_DEF void spda_fmt_char(FILE *o, const void *e);
+SPDA_DEF void spda_fmt_schar(FILE *o, const void *e);
+SPDA_DEF void spda_fmt_uchar(FILE *o, const void *e);
+SPDA_DEF void spda_fmt_short(FILE *o, const void *e);
+SPDA_DEF void spda_fmt_ushort(FILE *o, const void *e);
+SPDA_DEF void spda_fmt_int(FILE *o, const void *e);
+SPDA_DEF void spda_fmt_uint(FILE *o, const void *e);
+SPDA_DEF void spda_fmt_long(FILE *o, const void *e);
+SPDA_DEF void spda_fmt_ulong(FILE *o, const void *e);
+SPDA_DEF void spda_fmt_llong(FILE *o, const void *e);
+SPDA_DEF void spda_fmt_ullong(FILE *o, const void *e);
+SPDA_DEF void spda_fmt_size(FILE *o, const void *e);   // not in spda_default_fmt; pass explicitly
+SPDA_DEF void spda_fmt_float(FILE *o, const void *e);
+SPDA_DEF void spda_fmt_double(FILE *o, const void *e);
+SPDA_DEF void spda_fmt_ldouble(FILE *o, const void *e);
+SPDA_DEF void spda_fmt_str(FILE *o, const void *e);
 
 /* Macros */
 #define spda_create(type) \
     (type *) _spda_create(SPDA_DEFAULT_CAPACITY, sizeof(type))
 
 #define spda_reserve(type, capacity) \
-    (type *) _spda_create(capacity, sizeof(type))    
+    (type *) _spda_create(capacity, sizeof(type))
 
 #define spda_destroy(array)  _spda_destroy(array)
 
@@ -177,6 +182,34 @@ SPDA_DEF void _printStr(void *elem);
 
 #define spda_pop(array) 					_spda_remove((array), spda_len(array) - 1, 1, NULL)
 #define spda_pop_into(array, dest) 			_spda_remove((array), spda_len(array) - 1, 1, (dest))
+
+/* size_t is always one of unsigned int / long / long long, so its coverred
+   without its own entry (listing it too would be a duplicate type error).
+   Other types (ex. structs) fail to compile: use spda_print_with. */
+#define spda_default_fmt(array) _Generic((array)[0], \
+	bool               : spda_fmt_bool,    \
+	char               : spda_fmt_char,    \
+	signed char        : spda_fmt_schar,   \
+	unsigned char      : spda_fmt_uchar,   \
+	short              : spda_fmt_short,   \
+	unsigned short     : spda_fmt_ushort,  \
+	int                : spda_fmt_int,     \
+	unsigned int       : spda_fmt_uint,    \
+	long               : spda_fmt_long,    \
+	unsigned long      : spda_fmt_ulong,   \
+	long long          : spda_fmt_llong,   \
+	unsigned long long : spda_fmt_ullong,  \
+	float              : spda_fmt_float,   \
+	double             : spda_fmt_double,  \
+	long double        : spda_fmt_ldouble, \
+	char *             : spda_fmt_str,     \
+	const char *       : spda_fmt_str)
+
+#define spda_print(array) 			(_spda_fprint(stdout, (array), spda_default_fmt(array)), (void)putchar('\n'))
+#define spda_print_with(array, pfn) (_spda_fprint(stdout, (array), (pfn)), (void)putchar('\n'))
+
+#define spda_fprint(out, array)			  _spda_fprint((out), (array), spda_default_fmt(array))
+#define spda_fprint_with(out, array, pfn) _spda_fprint((out), (array), (pfn))
 
 #define spda_reverse(array) \
     _spda_reverse((array))
@@ -496,34 +529,45 @@ SPDA_DEF void spda_sort(void *array, int (*compar)(const void *, const void *)) 
 	qsort(array, length, stride, compar);
 }
 
-SPDA_DEF void spda_print_metadata(void *array) {
+SPDA_DEF void _spda_fprint(FILE *out, const void *array, spda_elem_fn pfn) {
+	if (!out || !pfn) return;
+
 	if (!_spda_is_valid(array)) {
-		SPDA_ERR("INVALID_ARRAY", "Provided pointer is not a spda compatible dynamic array.");
+		fputs("NULL", out); 
 		return;
 	}
 
-	/* Printing the Metadata of the array */
-	printf("Capacity: %zu, Length: %zu, Stride (bits): %zu\n", spda_cap(array),
-	spda_len(array), spda_stride(array) * 8);
-}
-
-SPDA_DEF void spda_print(void *array, void (*spdaElemPrinter)(void *elem)) {
-	for (size_t i = 0; i < spda_len(array); ++i) {
-		void *p = ((char *)array + i * spda_stride(array));
-		spdaElemPrinter(p);
+	size_t len = spda_len(array);
+	size_t stride = spda_stride(array);
+	
+	fputc('[', out);
+	for (size_t i = 0; i < len; ++i) {
+		if (i) fputs(", ", out);
+		pfn(out, (const char *)array + i * stride);
 	}
-	printf("\n");
+	fputc(']', out);
 }
 
-/* Default `spdaElemPrinter` functions for convenience */
-SPDA_DEF void _printInt(void *elem) { printf("%d ", *(int *)elem); }
-
-SPDA_DEF void _printFloat(void *elem) { printf("%f ", *(float *)elem); }
-
-SPDA_DEF void _printDouble(void *elem) { printf("%lf ", *(double *)elem); }
-
-SPDA_DEF void _printChar(void *elem) { printf("%c ", *(char *)elem); }
-
-SPDA_DEF void _printStr(void *elem) { printf("%s\n", *(const char **)elem); }
+/* Default `spda_elem_fn` element printers */
+SPDA_DEF void spda_fmt_bool   (FILE *o, const void *e) { fputs(*(const bool *)e ? "true" : "false", o); }
+SPDA_DEF void spda_fmt_char   (FILE *o, const void *e) { fprintf(o, "'%c'", *(const char *)e); }
+SPDA_DEF void spda_fmt_schar  (FILE *o, const void *e) { fprintf(o, "%d", *(const signed char *)e); }
+SPDA_DEF void spda_fmt_uchar  (FILE *o, const void *e) { fprintf(o, "%u", *(const unsigned char *)e); }
+SPDA_DEF void spda_fmt_short  (FILE *o, const void *e) { fprintf(o, "%d", *(const short *)e); }
+SPDA_DEF void spda_fmt_ushort (FILE *o, const void *e) { fprintf(o, "%u", *(const unsigned short *)e); }
+SPDA_DEF void spda_fmt_int    (FILE *o, const void *e) { fprintf(o, "%d", *(const int *)e); }
+SPDA_DEF void spda_fmt_uint   (FILE *o, const void *e) { fprintf(o, "%u", *(const unsigned int *)e); }
+SPDA_DEF void spda_fmt_long   (FILE *o, const void *e) { fprintf(o, "%ld", *(const long *)e); }
+SPDA_DEF void spda_fmt_ulong  (FILE *o, const void *e) { fprintf(o, "%lu", *(const unsigned long *)e); }
+SPDA_DEF void spda_fmt_llong  (FILE *o, const void *e) { fprintf(o, "%lld", *(const long long *)e); }
+SPDA_DEF void spda_fmt_ullong (FILE *o, const void *e) { fprintf(o, "%llu", *(const unsigned long long *)e); }
+SPDA_DEF void spda_fmt_size   (FILE *o, const void *e) { fprintf(o, "%zu", *(const size_t *)e); }
+SPDA_DEF void spda_fmt_float  (FILE *o, const void *e) { fprintf(o, "%g", *(const float *)e); }
+SPDA_DEF void spda_fmt_double (FILE *o, const void *e) { fprintf(o, "%g", *(const double *)e); }
+SPDA_DEF void spda_fmt_ldouble(FILE *o, const void *e) { fprintf(o, "%Lg", *(const long double *)e); }
+SPDA_DEF void spda_fmt_str    (FILE *o, const void *e) {
+    const char *s = *(const char *const *)e;
+    fprintf(o, s ? "\"%s\"" : "%s", s ? s : "NULL");
+}
 
 #endif // SPDA_IMPLEMENTATION_GUARD_

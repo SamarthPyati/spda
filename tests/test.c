@@ -1226,6 +1226,218 @@ TEST(layout, elements_aligned_for_any_type) {
 }
 
 /* ======================================================================== */
+/* Printing                                                                 */
+/* ======================================================================== */
+
+static char g_print_buf[8192];
+
+/* Read everything written to `f` since it was opened, then close it. */
+static const char *print_capture_end(FILE *f) {
+    fflush(f);
+    rewind(f);
+    size_t n = fread(g_print_buf, 1, sizeof g_print_buf - 1, f);
+    g_print_buf[n] = '\0';
+    fclose(f);
+    return g_print_buf;
+}
+
+/* CHECK_PRINTS(stmt using `f`, "expected") */
+#define CHECK_PRINTS(stmt, expected)                                          \
+    do {                                                                      \
+        FILE *f = tmpfile();                                                  \
+        REQUIRE(f);                                                           \
+        stmt;                                                                 \
+        const char *got__ = print_capture_end(f);                             \
+        if (strcmp(got__, (expected)) != 0)                                   \
+            fail_at(__FILE__, __LINE__, "printed \"%s\", expected \"%s\"",    \
+                    got__, (expected));                                       \
+    } while (0)
+
+static void fmt_person(FILE *o, const void *e) {
+    const Person *p = e;
+    fprintf(o, "{%d, %s}", p->id, p->name);
+}
+
+TEST(print, ints) {
+    int *a = spda_create(int);
+    spda_append_many(a, 0, -1, 42, INT_MAX, INT_MIN);
+    CHECK_PRINTS(spda_fprint(f, a), "[0, -1, 42, 2147483647, -2147483648]");
+    spda_destroy(a);
+}
+
+TEST(print, empty_array) {
+    int *a = spda_create(int);
+    CHECK_PRINTS(spda_fprint(f, a), "[]");
+    spda_destroy(a);
+}
+
+TEST(print, single_element_has_no_separator) {
+    int *a = spda_create(int);
+    spda_append(a, 7);
+    CHECK_PRINTS(spda_fprint(f, a), "[7]");
+    spda_destroy(a);
+}
+
+TEST(print, null_array_prints_null) {
+    int *a = NULL;
+    CHECK_PRINTS(spda_fprint(f, a), "NULL");
+}
+
+/* fprint must not add a newline, so it can be embedded in a line. */
+TEST(print, fprint_composes_inline) {
+    int *a = make_seq(3);
+    CHECK_PRINTS((fputs("x = ", f), spda_fprint(f, a), fputs(" end", f)),
+                 "x = [0, 1, 2] end");
+    spda_destroy(a);
+}
+
+TEST(print, long_and_size_t) {
+    long *l = spda_create(long);
+    spda_append_many(l, -5L, LONG_MAX);
+    CHECK_PRINTS(spda_fprint(f, l), "[-5, 9223372036854775807]");
+    size_t *s = spda_create(size_t);
+    spda_append_many(s, (size_t)0, (size_t)123);
+    CHECK_PRINTS(spda_fprint(f, s), "[0, 123]");
+    spda_destroy(l);
+    spda_destroy(s);
+}
+
+TEST(print, floats_and_doubles) {
+    float *a = spda_create(float);
+    spda_append_many(a, 1.5f, -0.25f, 0.0f);
+    CHECK_PRINTS(spda_fprint(f, a), "[1.5, -0.25, 0]");
+    double *d = spda_create(double);
+    spda_append_many(d, 3.0, 1e20, -2.5e-7);
+    CHECK_PRINTS(spda_fprint(f, d), "[3, 1e+20, -2.5e-07]");
+    spda_destroy(a);
+    spda_destroy(d);
+}
+
+TEST(print, chars_are_quoted) {
+    char *a = spda_create(char);
+    spda_append_many(a, 'a', 'Z', ' ');
+    CHECK_PRINTS(spda_fprint(f, a), "['a', 'Z', ' ']");
+    spda_destroy(a);
+}
+
+TEST(print, strings_quoted_and_null_safe) {
+    const char **s = spda_create(const char *);
+    spda_append_many(s, "hi", "", (const char *)NULL);
+    CHECK_PRINTS(spda_fprint(f, s), "[\"hi\", \"\", NULL]");
+    char **m = spda_create(char *);
+    spda_append(m, (char *)"mut");
+    CHECK_PRINTS(spda_fprint(f, m), "[\"mut\"]");
+    spda_destroy(s);
+    spda_destroy(m);
+}
+
+TEST(print, custom_printer_for_structs) {
+    Person *p = spda_create(Person);
+    spda_append(p, ((Person){.id = 1, .name = "ann"}));
+    spda_append(p, ((Person){.id = 2, .name = "bo"}));
+    CHECK_PRINTS(spda_fprint_with(f, p, fmt_person), "[{1, ann}, {2, bo}]");
+    spda_destroy(p);
+}
+
+static void fmt_hex(FILE *o, const void *e) { fprintf(o, "0x%x", *(const unsigned *)e); }
+
+TEST(print, custom_printer_overrides_default) {
+    int *a = spda_create(int);
+    spda_append_many(a, 10, 255);
+    CHECK_PRINTS(spda_fprint_with(f, a, fmt_hex), "[0xa, 0xff]");
+    spda_destroy(a);
+}
+
+TEST(print, null_printer_is_safe) {
+    int *a = make_seq(3);
+    CHECK_PRINTS(spda_fprint_with(f, a, NULL), "");
+    spda_destroy(a);
+}
+
+TEST(print, null_stream_is_safe) {
+    int *a = make_seq(3);
+    spda_fprint(NULL, a);
+    spda_fprint_with(NULL, a, spda_fmt_int);
+    CHECK_INTS(a, 0, 1, 2);
+    spda_destroy(a);
+}
+
+TEST(print, does_not_modify_array) {
+    int *a = make_seq(4);
+    size_t cap = spda_cap(a);
+    CHECK_PRINTS(spda_fprint(f, a), "[0, 1, 2, 3]");
+    CHECK_INTS(a, 0, 1, 2, 3);
+    CHECK_EQ(spda_cap(a), cap);
+    spda_destroy(a);
+}
+
+TEST(print, many_elements_separator_count) {
+    int *a = make_seq(500);
+    FILE *f = tmpfile();
+    REQUIRE(f);
+    spda_fprint(f, a);
+    const char *out = print_capture_end(f);
+    size_t commas = 0;
+    for (const char *c = out; *c; c++) commas += (*c == ',');
+    CHECK_EQ(commas, 499);
+    CHECK(out[0] == '[');
+    CHECK(out[strlen(out) - 1] == ']');
+    spda_destroy(a);
+}
+
+TEST(print, unsigned_types) {
+    unsigned *u = spda_create(unsigned);
+    spda_append_many(u, 0u, UINT_MAX);
+    CHECK_PRINTS(spda_fprint(f, u), "[0, 4294967295]");
+    unsigned long long *ull = spda_create(unsigned long long);
+    spda_append(ull, ULLONG_MAX);
+    CHECK_PRINTS(spda_fprint(f, ull), "[18446744073709551615]");
+    unsigned short *us = spda_create(unsigned short);
+    spda_append(us, (unsigned short)65535);
+    CHECK_PRINTS(spda_fprint(f, us), "[65535]");
+    spda_destroy(u);
+    spda_destroy(ull);
+    spda_destroy(us);
+}
+
+TEST(print, signed_small_and_wide_types) {
+    short *s = spda_create(short);
+    spda_append_many(s, (short)-3, (short)SHRT_MAX);
+    CHECK_PRINTS(spda_fprint(f, s), "[-3, 32767]");
+    long long *ll = spda_create(long long);
+    spda_append(ll, LLONG_MIN);
+    CHECK_PRINTS(spda_fprint(f, ll), "[-9223372036854775808]");
+    spda_destroy(s);
+    spda_destroy(ll);
+}
+
+/* Byte types print as numbers, unlike plain char. */
+TEST(print, byte_types_print_as_numbers) {
+    unsigned char *u = spda_create(unsigned char);
+    spda_append_many(u, (unsigned char)0, (unsigned char)255);
+    CHECK_PRINTS(spda_fprint(f, u), "[0, 255]");
+    signed char *s = spda_create(signed char);
+    spda_append(s, (signed char)-128);
+    CHECK_PRINTS(spda_fprint(f, s), "[-128]");
+    spda_destroy(u);
+    spda_destroy(s);
+}
+
+TEST(print, bools) {
+    bool *b = spda_create(bool);
+    spda_append_many(b, true, false);
+    CHECK_PRINTS(spda_fprint(f, b), "[true, false]");
+    spda_destroy(b);
+}
+
+TEST(print, long_double) {
+    long double *a = spda_create(long double);
+    spda_append_many(a, 1.5L, -2.0L);
+    CHECK_PRINTS(spda_fprint(f, a), "[1.5, -2]");
+    spda_destroy(a);
+}
+
+/* ======================================================================== */
 /* Randomised comparison against a plain C array                            */
 /* ======================================================================== */
 
