@@ -63,10 +63,10 @@ typedef struct {
 #define SPDA_ERR(etype, msg)                                                            \
     do {                                                                                \
         fprintf(stderr, "%s:%d [%s] - %s\n", __FILE__, __LINE__, etype, msg);           \
-    } while (0)                                                         
+    } while (0)     
 
 // Length for vanilla c arrays
-#define CARRAY_LEN(xs) (sizeof((xs)) / sizeof((xs)[0]))
+#define SPDA_COUNTOF(xs) (sizeof((xs)) / sizeof((xs)[0]))
 
 /* Core Operations */
 SPDA_DEF void *_spda_create(size_t cap, size_t stride);
@@ -119,7 +119,7 @@ SPDA_DEF void *spda_copy(void *src);
 typedef void (*spda_elem_fn)(FILE *f, const void *elem);
 SPDA_DEF void _spda_fprint(FILE *out, const void *array, spda_elem_fn pfn);
 
-/* Default datatype element printer */
+/* Default c datatypes element printer */
 SPDA_DEF void spda_fmt_bool(FILE *o, const void *e);
 SPDA_DEF void spda_fmt_char(FILE *o, const void *e);
 SPDA_DEF void spda_fmt_schar(FILE *o, const void *e);
@@ -153,10 +153,10 @@ SPDA_DEF void spda_fmt_str(FILE *o, const void *e);
         (array) = _spda_append((array), &spda__tmp_); \
     } while (0)
 
-#define spda_append_many(array, ...)                                              \
-    do {                                                                          \
-        __typeof__(*(array)) spda__tmp_[] = {__VA_ARGS__};                        \
-        (array) = _spda_append_many((array), spda__tmp_, CARRAY_LEN(spda__tmp_)); \
+#define spda_append_many(array, ...)                                                \
+    do {                                                                            \
+        __typeof__(*(array)) spda__tmp_[] = {__VA_ARGS__};                          \
+        (array) = _spda_append_many((array), spda__tmp_, SPDA_COUNTOF(spda__tmp_)); \
     } while (0)
 
 #define spda_append_items(array, items, count)                            \
