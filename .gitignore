@@ -7,5 +7,7 @@ ex*
 tests/playground
 tests/playground.c
 playground/
-plat.*
+plat*
 numbers.txt
+external/
+ISSUES.md

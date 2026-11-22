@@ -65,7 +65,6 @@ typedef struct {
         fprintf(stderr, "%s:%d [%s] - %s\n", __FILE__, __LINE__, etype, msg);           \
     } while (0)     
 
-// Length for vanilla c arrays
 #define SPDA_COUNTOF(xs) (sizeof((xs)) / sizeof((xs)[0]))
 
 /* Core Operations */
@@ -112,9 +111,7 @@ SPDA_DEF void spda_clear(void *array);
 SPDA_DEF bool spda_set_length(void *array, size_t length);
 
 /* Sort and search */
-SPDA_DEF void spda_sort(void *array, int (*compar)(const void *, const void *));   // qsort  
-/* TODO: not implemented yet; declaring it would turn a call into a link error. */
-/* SPDA_DEF void *spda_search(void *array, const void *target); */
+SPDA_DEF void spda_sort(void *array, int (*compar)(const void *, const void *));
 
 /* Utilities */
 SPDA_DEF void *spda_copy(void *src);
@@ -534,15 +531,17 @@ SPDA_DEF void *spda_copy(void *src) {
 }
 
 SPDA_DEF void spda_sort(void *array, int (*compar)(const void *, const void *)) {
-	if (!array) {
-		SPDA_ERR("INVALID_SOURCE", "Source array cannot be NULL");
-		exit(EXIT_FAILURE);
+	if (!_spda_is_valid(array)) {
+		SPDA_ERR("INVALID_ARRAY", "Pointer not a spda compatible dynamic array.");
+		return;
 	}
-	
-	size_t length = spda_len(array);
-	size_t stride = spda_stride(array);
-	
-	qsort(array, length, stride, compar);
+
+	if (!compar) {
+		SPDA_ERR("INVALID_ARGUMENT", "Comparator cannot be NULL.");
+		return;
+	}
+
+	qsort(array, spda_len(array), spda_stride(array), compar);
 }
 
 SPDA_DEF void _spda_fprint(FILE *out, const void *array, spda_elem_fn pfn) {
