@@ -300,7 +300,7 @@ SPDA_DEF void *_spda_resize_def(void *array) {
 
 SPDA_DEF void *_spda_resize(void *array, size_t size) {
 	if (!_spda_is_valid(array))
-		return NULL;
+		return array;
 
 	spda_header_t *header = _spda_get_header(array);
 
@@ -308,7 +308,7 @@ SPDA_DEF void *_spda_resize(void *array, size_t size) {
 	size_t new_size;
 	if (!_spda_alloc_size(size, header->stride, &new_size)) {
 		SPDA_ERR("SIZE_OVERFLOW", "Requested capacity * element size exceeds SIZE_MAX.");
-		return NULL;
+		return array;
 	}
 
 	if (header->length > size)  {
@@ -360,7 +360,7 @@ SPDA_DEF void *_spda_append(void *array, const void *value) {
 		void *new_array = _spda_resize_def(array);
 		if (new_array == NULL) {
 			SPDA_ERR("MEM_ALLOCATION", "Failed to resize array");
-			return array; // Return original array if resize fails
+			return array; 
 		}
 		array = new_array;
 	}
@@ -423,8 +423,6 @@ SPDA_DEF void *_spda_append_many(void *array, const void *items, size_t item_cou
 	if (aliased)
 		items = (char *)array + offset;   // re-point into the (possibly moved) block
 
-	// One memcpy for the entire block instead of per-element copies. Safe even
-	// when aliased: the source ends at or before `len`, the destination starts there.
 	memcpy((char *)array + len * stride, items, item_count * stride);
 	_spda_get_header(array)->length = required;
 	
