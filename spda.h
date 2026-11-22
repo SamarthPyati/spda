@@ -15,13 +15,16 @@
 *
 *  Structure of the array: 
 *                 METADATA                                 ELEMENTS
-*  +---------------------------------------+---------------------------------------+
-*  |  capacity   |  length   |  stride     |               elements                |
-*  +---------------------------------------+---------------------------------------+
-*  |  (size_t)   |  (size_t) |  (size_t)   |               (void *)                |
-*  +---------------------------------------+---------------------------------------+
-*                                          ^
-*                                      array pointer 
+*  +---------------------------------------------+---------------------------------+
+*  |  capacity   |  length   |  stride   | (pad) |            elements             |
+*  +---------------------------------------------+---------------------------------+
+*  |  (size_t)   |  (size_t) |  (size_t) |       |            (void *)             |
+*  +---------------------------------------------+---------------------------------+
+*                                                ^
+*                                            array pointer
+*
+*  The header is padded to a multiple of max(alignof(max_align_t), 16) bytes
+*  (32 on 64-bit platforms) so elements of any standard type are aligned.
 */
 
 #ifndef SPDA_HEADER_GUARD_H_
@@ -32,12 +35,18 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 
 typedef struct {
-    size_t capacity; 
+    _Alignas(max_align_t) _Alignas(16) size_t capacity;
     size_t length;
     size_t stride;
 } spda_header_t;
+
+_Static_assert(sizeof(spda_header_t) % _Alignof(max_align_t) == 0,
+               "spda: header size must preserve max_align_t alignment of elements");
+_Static_assert(sizeof(spda_header_t) % 16 == 0,
+               "spda: header size must preserve 16-byte alignment of elements");
 
 #ifndef SPDA_DEFAULT_CAPACITY
     #define SPDA_DEFAULT_CAPACITY 32

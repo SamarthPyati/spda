@@ -1216,14 +1216,97 @@ TEST(foreach, mutates_in_place) {
 /* Memory layout                                                            */
 /* ======================================================================== */
 
+/* ISSUES.md B4. Elements start sizeof(spda_header_t) bytes into a malloc
+   block, so the header size decides element alignment. 16 is checked
+   explicitly because max_align_t is only 8 on Apple arm64, which hid the
+   bug there, while __int128 and SIMD types need 16. */
+
+#define CHECK_ALIGNED(p)                                                      \
+    do {                                                                      \
+        CHECK_EQ((uintptr_t)(p) % _Alignof(max_align_t), 0);                  \
+        CHECK_EQ((uintptr_t)(p) % 16, 0);                                     \
+    } while (0)
+
+TEST(layout, header_size_preserves_alignment) {
+    CHECK_EQ(sizeof(spda_header_t) % _Alignof(max_align_t), 0);
+    CHECK_EQ(sizeof(spda_header_t) % 16, 0);
+    CHECK(sizeof(spda_header_t) >= 3 * sizeof(size_t));
+}
+
 TEST(layout, elements_aligned_for_any_type) {
     long double *a = spda_create(long double);
     REQUIRE(a);
-    CHECK_EQ((uintptr_t)a % _Alignof(max_align_t), 0);
+    CHECK_ALIGNED(a);
     spda_append(a, 1.5L);
     CHECK(a[0] == 1.5L);
     spda_destroy(a);
 }
+
+/* Alignment must survive every operation that (re)allocates. */
+TEST(layout, alignment_survives_reallocation) {
+    double *a = spda_create(double);
+    CHECK_ALIGNED(a);
+    for (int i = 0; i < 1000; i++) spda_append(a, i * 0.5);   /* many grows */
+    CHECK_ALIGNED(a);
+    a = _spda_resize(a, 4000);
+    REQUIRE(a);
+    CHECK_ALIGNED(a);
+    while (spda_len(a) > 10) spda_pop(a);
+    a = spda_shrink_to_fit(a);
+    CHECK_ALIGNED(a);
+    double *c = spda_copy(a);
+    REQUIRE(c);
+    CHECK_ALIGNED(c);
+    spda_destroy(a);
+    spda_destroy(c);
+}
+
+TEST(layout, alignment_for_every_element_size) {
+    /* Odd element sizes must not shift the base: alignment comes from the
+       header alone. */
+    char *c1 = spda_create(char);
+    Point3D *p = spda_create(Point3D);
+    Big *b = spda_create(Big);
+    CHECK_ALIGNED(c1);
+    CHECK_ALIGNED(p);
+    CHECK_ALIGNED(b);
+    spda_destroy(c1);
+    spda_destroy(p);
+    spda_destroy(b);
+}
+
+/* A struct requiring max_align_t alignment round-trips intact. */
+TEST(layout, max_align_struct_elements) {
+    typedef struct { max_align_t m; char tag; } Aligned;
+    Aligned *a = spda_create(Aligned);
+    for (int i = 0; i < 100; i++) {
+        Aligned x;
+        memset(&x, 0, sizeof x);
+        x.tag = (char)i;
+        spda_append(a, x);
+    }
+    CHECK_ALIGNED(a);
+    for (int i = 0; i < 100; i++) {
+        REQUIRE(a[i].tag == (char)i);
+        CHECK_EQ((uintptr_t)&a[i] % _Alignof(Aligned), 0);
+    }
+    spda_destroy(a);
+}
+
+#ifdef __SIZEOF_INT128__
+/* __int128 needs 16-byte alignment even where max_align_t is 8. With the
+   old 24-byte header, UBSan reports a misaligned access here. */
+__extension__ typedef __int128 i128;
+
+TEST(layout, int128_elements) {
+    i128 *a = spda_create(i128);
+    REQUIRE(a);
+    CHECK_EQ((uintptr_t)a % _Alignof(i128), 0);
+    for (int i = 0; i < 100; i++) spda_append(a, (i128)i << 70);
+    for (int i = 0; i < 100; i++) REQUIRE(a[i] == ((i128)i << 70));
+    spda_destroy(a);
+}
+#endif
 
 /* ======================================================================== */
 /* Printing                                                                 */
