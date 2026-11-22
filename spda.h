@@ -109,7 +109,7 @@ SPDA_DEF void *spda_shrink_to_fit(void *array);
 
 /* Array Operations */
 SPDA_DEF void *_spda_append(void *array, const void* value);
-SPDA_DEF void *_spda_append_many(void *array, void *items, size_t item_count);
+SPDA_DEF void *_spda_append_many(void *array, const void *items, size_t item_count);
 SPDA_DEF void *_spda_insert(void *array, size_t idx, const void* value);
 
 SPDA_DEF bool _spda_remove(void *array, size_t idx, size_t count, void *dest);
@@ -361,7 +361,7 @@ SPDA_DEF void *_spda_append(void *array, const void *value) {
 	return array;
 }
 
-SPDA_DEF void *_spda_append_many(void *array, void *items, size_t item_count) {
+SPDA_DEF void *_spda_append_many(void *array, const void *items, size_t item_count) {
 	if (!_spda_is_valid(array) || !items || item_count == 0)
 		return array;
 	
@@ -374,6 +374,24 @@ SPDA_DEF void *_spda_append_many(void *array, void *items, size_t item_count) {
 		return array;
 	}
 	size_t required = len + item_count;
+
+	// `items` may point into this array (e.g. appending it to itself). The
+	// resize below can move the block, so remember the source as an offset.
+	// Integer comparison avoids UB from relational ops on unrelated pointers.
+	uintptr_t base = (uintptr_t)array;
+	uintptr_t src  = (uintptr_t)items;
+	bool aliased   = src >= base && src < base + cap * stride;
+	size_t offset  = aliased ? (size_t)(src - base) : 0;
+
+	if (aliased) {
+		// Source must lie within the live elements: anything past `len` is
+		// uninitialised and would overlap the destination of the copy.
+		size_t live = len * stride;
+		if (offset > live || item_count > (live - offset) / stride) {
+			SPDA_ERR("INVALID_ARGUMENT", "Items overlap the array but extend past its length.");
+			return array;
+		}
+	}
 
 	// Single resize upfront if needed, instead of realloc-ing on every boundary
 	if (required > cap) {
@@ -392,8 +410,12 @@ SPDA_DEF void *_spda_append_many(void *array, void *items, size_t item_count) {
 		}
 		array = resized;
 	}
-	
-	// One memcpy for the entire block instead of per-element copies
+
+	if (aliased)
+		items = (char *)array + offset;   // re-point into the (possibly moved) block
+
+	// One memcpy for the entire block instead of per-element copies. Safe even
+	// when aliased: the source ends at or before `len`, the destination starts there.
 	memcpy((char *)array + len * stride, items, item_count * stride);
 	_spda_get_header(array)->length = required;
 	

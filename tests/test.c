@@ -1554,6 +1554,106 @@ TEST(overflow, normal_growth_unaffected) {
 }
 
 /* ======================================================================== */
+/* Appending from the same array  (ISSUES.md B3)                            */
+/* ======================================================================== */
+
+/* Full array: the append must reallocate, which used to leave `items`
+   pointing at the freed block (ASan: heap-use-after-free). */
+TEST(self_append, whole_array_when_full) {
+    int *a = make_seq(SPDA_DEFAULT_CAPACITY);
+    REQUIRE(spda_len(a) == spda_cap(a));
+    spda_append_items(a, a, spda_len(a));
+    REQUIRE(spda_len(a) == 2 * SPDA_DEFAULT_CAPACITY);
+    for (int i = 0; i < 2 * SPDA_DEFAULT_CAPACITY; i++)
+        REQUIRE(a[i] == i % SPDA_DEFAULT_CAPACITY);
+    CHECK_INVARIANTS(a);
+    spda_destroy(a);
+}
+
+/* Room to spare: no reallocation, plain copy within the block. */
+TEST(self_append, whole_array_with_spare_capacity) {
+    int *a = make_seq(5);
+    spda_append_items(a, a, spda_len(a));
+    CHECK_INTS(a, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4);
+    spda_destroy(a);
+}
+
+TEST(self_append, subrange_when_full) {
+    int *a = make_seq(SPDA_DEFAULT_CAPACITY);
+    spda_append_items(a, a + 5, 3);
+    REQUIRE(spda_len(a) == SPDA_DEFAULT_CAPACITY + 3);
+    CHECK_EQ(a[SPDA_DEFAULT_CAPACITY + 0], 5);
+    CHECK_EQ(a[SPDA_DEFAULT_CAPACITY + 1], 6);
+    CHECK_EQ(a[SPDA_DEFAULT_CAPACITY + 2], 7);
+    spda_destroy(a);
+}
+
+/* The last live element is a valid one-element source. */
+TEST(self_append, last_element) {
+    int *a = make_seq(SPDA_DEFAULT_CAPACITY);
+    spda_append_items(a, a + SPDA_DEFAULT_CAPACITY - 1, 1);
+    REQUIRE(spda_len(a) == SPDA_DEFAULT_CAPACITY + 1);
+    CHECK_EQ(a[SPDA_DEFAULT_CAPACITY], SPDA_DEFAULT_CAPACITY - 1);
+    spda_destroy(a);
+}
+
+/* Doubling itself repeatedly: every step reallocates. */
+TEST(self_append, repeated_doubling) {
+    int *a = make_seq(3);
+    for (int round = 0; round < 8; round++)
+        spda_append_items(a, a, spda_len(a));
+    REQUIRE(spda_len(a) == 3u << 8);
+    for (size_t i = 0; i < spda_len(a); i++) REQUIRE(a[i] == (int)(i % 3));
+    CHECK_INVARIANTS(a);
+    spda_destroy(a);
+}
+
+TEST(self_append, structs) {
+    Person *p = spda_create(Person);
+    for (int i = 0; i < SPDA_DEFAULT_CAPACITY; i++)
+        spda_append(p, ((Person){.id = i, .name = "x"}));
+    spda_append_items(p, p, spda_len(p));
+    REQUIRE(spda_len(p) == 2 * SPDA_DEFAULT_CAPACITY);
+    for (int i = 0; i < 2 * SPDA_DEFAULT_CAPACITY; i++) {
+        REQUIRE(p[i].id == i % SPDA_DEFAULT_CAPACITY);
+        REQUIRE(strcmp(p[i].name, "x") == 0);
+    }
+    spda_destroy(p);
+}
+
+/* Source starts in the live elements but runs past `len`: it would read
+   uninitialised slots and overlap the destination, so it is rejected. */
+TEST(self_append, range_past_length_rejected) {
+    int *a = make_seq(4);
+    int *r = _spda_append_many(a, a + 2, 5);
+    CHECK(r == a);
+    CHECK_INTS(a, 0, 1, 2, 3);
+    spda_destroy(a);
+}
+
+/* Source entirely in unused capacity (uninitialised): rejected. */
+TEST(self_append, source_in_unused_capacity_rejected) {
+    int *a = make_seq(4);
+    int *r = _spda_append_many(a, a + 10, 1);
+    CHECK(r == a);
+    CHECK_INTS(a, 0, 1, 2, 3);
+    spda_destroy(a);
+}
+
+/* A separate array right next to this one in memory is not mistaken for an
+   alias: appending from another spda array still works. */
+TEST(self_append, other_array_unaffected) {
+    int *a = make_seq(SPDA_DEFAULT_CAPACITY);
+    int *b = make_seq(3);
+    spda_append_items(a, b, spda_len(b));
+    REQUIRE(spda_len(a) == SPDA_DEFAULT_CAPACITY + 3);
+    CHECK_EQ(a[SPDA_DEFAULT_CAPACITY], 0);
+    CHECK_EQ(a[SPDA_DEFAULT_CAPACITY + 2], 2);
+    spda_destroy(a);
+    spda_destroy(b);
+}
+
+/* ======================================================================== */
 /* Randomised comparison against a plain C array                            */
 /* ======================================================================== */
 
