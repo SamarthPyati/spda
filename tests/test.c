@@ -1438,6 +1438,122 @@ TEST(print, long_double) {
 }
 
 /* ======================================================================== */
+/* Growth from zero and size overflow  (ISSUES.md B1, B2)                   */
+/* ======================================================================== */
+/* The overflow tests never reach malloc/realloc: under ASan an attempted
+   allocation of these sizes aborts the test, so passing proves the guard
+   fires before any allocation. */
+
+/* B1: growth used to start from cap (0) and 0 * factor never terminated. */
+TEST(growth, append_many_after_resize_to_zero) {
+    int *a = spda_create(int);
+    a = _spda_resize(a, 0);
+    REQUIRE(a);
+    spda_append_many(a, 1, 2, 3);
+    CHECK_INTS(a, 1, 2, 3);
+    CHECK(spda_cap(a) >= SPDA_DEFAULT_CAPACITY);
+    CHECK_INVARIANTS(a);
+    spda_destroy(a);
+}
+
+TEST(growth, append_items_large_batch_from_zero) {
+    enum { N = 1000 };
+    int items[N];
+    for (int i = 0; i < N; i++) items[i] = i;
+    int *a = spda_create(int);
+    a = _spda_resize(a, 0);
+    REQUIRE(a);
+    spda_append_items(a, items, N);
+    REQUIRE(spda_len(a) == N);
+    CHECK(spda_cap(a) >= N);
+    for (int i = 0; i < N; i++) REQUIRE(a[i] == i);
+    spda_destroy(a);
+}
+
+/* capacity * stride wraps: must fail instead of allocating a tiny block. */
+TEST(overflow, create_capacity_times_stride) {
+    CHECK(spda_reserve(int, SIZE_MAX / 4 + 2) == NULL);
+    CHECK(spda_reserve(Big, SIZE_MAX / 256) == NULL);
+    CHECK(spda_reserve(double, SIZE_MAX) == NULL);
+}
+
+/* header + capacity * stride wraps even though the product alone fits. */
+TEST(overflow, create_header_plus_elements) {
+    CHECK(_spda_create(SIZE_MAX, 1) == NULL);
+    CHECK(_spda_create(SIZE_MAX - 8, 1) == NULL);
+}
+
+TEST(overflow, reserve_just_below_limit_still_checks_header) {
+    size_t per_int = (SIZE_MAX - sizeof(spda_header_t)) / sizeof(int);
+    CHECK(spda_reserve(int, per_int + 1) == NULL);
+}
+
+/* Oversized resize fails without touching the array (length not clamped). */
+TEST(overflow, resize_rejected_before_clamp) {
+    int *a = make_seq(10);
+    size_t cap = spda_cap(a);
+    int *r = _spda_resize(a, SIZE_MAX / 2);
+    CHECK(r == NULL);
+    CHECK_EQ(spda_cap(a), cap);
+    CHECK_INTS(a, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+    spda_destroy(a);
+}
+
+/* Doubling the capacity itself would wrap. The header is forged so no real
+   allocation of that size is needed; it is restored before destroy. */
+TEST(overflow, resize_def_capacity_cannot_double) {
+    int *a = make_seq(3);
+    size_t real_cap = spda_cap(a);
+    _spda_get_header(a)->capacity = SIZE_MAX / 2 + 1;
+    CHECK(_spda_resize_def(a) == NULL);
+    _spda_get_header(a)->capacity = real_cap;
+    CHECK_INTS(a, 0, 1, 2);
+    spda_destroy(a);
+}
+
+/* Doubling fits in size_t, but doubled capacity * stride does not. */
+TEST(overflow, resize_def_bytes_overflow) {
+    int *a = make_seq(3);
+    size_t real_cap = spda_cap(a);
+    _spda_get_header(a)->capacity = SIZE_MAX / 8;
+    CHECK(_spda_resize_def(a) == NULL);
+    _spda_get_header(a)->capacity = real_cap;
+    CHECK_INTS(a, 0, 1, 2);
+    spda_destroy(a);
+}
+
+/* len + count wraps: rejected before items is ever read. */
+TEST(overflow, append_many_length_plus_count) {
+    int *a = make_seq(1);
+    int item = 5;
+    int *r = _spda_append_many(a, &item, SIZE_MAX);
+    CHECK(r == a);
+    CHECK_INTS(a, 0);
+    spda_destroy(a);
+}
+
+/* Huge count that does not wrap len + count: the doubling loop must stop
+   (jump to `required`) and the byte-size check must reject it. */
+TEST(overflow, append_many_huge_count_terminates) {
+    int *a = make_seq(2);
+    int item = 5;
+    int *r = _spda_append_many(a, &item, SIZE_MAX / 2);
+    CHECK(r == a);
+    CHECK_INTS(a, 0, 1);
+    spda_destroy(a);
+}
+
+/* Normal growth is unaffected by the new checks. */
+TEST(overflow, normal_growth_unaffected) {
+    int *a = spda_create(int);
+    for (int i = 0; i < 10000; i++) spda_append(a, i);
+    REQUIRE(spda_len(a) == 10000);
+    for (int i = 0; i < 10000; i++) REQUIRE(a[i] == i);
+    CHECK_INVARIANTS(a);
+    spda_destroy(a);
+}
+
+/* ======================================================================== */
 /* Randomised comparison against a plain C array                            */
 /* ======================================================================== */
 

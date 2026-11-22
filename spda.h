@@ -31,6 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 typedef struct {
     size_t capacity; 
@@ -90,6 +91,15 @@ static inline size_t spda_stride(const void *array) {
 
 static inline bool _spda_is_valid(const void *array) {
 	return spda_stride(array) > 0;
+}
+
+/* Helpers */
+static inline bool _spda_alloc_size(size_t count, size_t stride, size_t *bytes) {
+	if (stride && count > (SIZE_MAX - sizeof(spda_header_t)) / stride) 
+		return false;
+
+	*bytes = sizeof(spda_header_t) + count * stride;
+	return true;
 }
 
 /* Memory Operations */
@@ -216,16 +226,20 @@ SPDA_DEF void spda_fmt_str(FILE *o, const void *e);
 
 SPDA_DEF void *_spda_create(size_t capacity, size_t stride) {
 	if (capacity < SPDA_DEFAULT_CAPACITY)
-	capacity = SPDA_DEFAULT_CAPACITY;
-	
+		capacity = SPDA_DEFAULT_CAPACITY;
+
 	if (stride == 0) {
 		SPDA_ERR("INVALID_ARGUMENT", "Stride (size of datatype) cannot be zero");
 		return NULL;
 	}
-	
-	size_t header_size = sizeof(spda_header_t);
-	size_t array_size = capacity * stride;
-	spda_header_t *array = (spda_header_t *)malloc(header_size + array_size);
+
+	size_t total_size;
+	if (!_spda_alloc_size(capacity, stride, &total_size)) {
+		SPDA_ERR("SIZE_OVERFLOW", "Capacity * element size exceeds SIZE_MAX.");
+		return NULL;
+	}
+
+	spda_header_t *array = (spda_header_t *)malloc(total_size);
 	
 	if (!array) {
 		SPDA_ERR("MEM_ALLOCATION", "Failed memory allocation for dynamic array.");
@@ -251,10 +265,20 @@ SPDA_DEF void *_spda_resize_def(void *array) {
 		return NULL;
 	
 	spda_header_t *header = _spda_get_header(array);
-	size_t new_cap = header->capacity ? (size_t)header->capacity * SPDA_GROWTH_FACTOR
+
+	if (header->capacity > SIZE_MAX / SPDA_GROWTH_FACTOR) {
+		SPDA_ERR("SIZE_OVERFLOW", "Capacity cannot grow any further.");
+		return NULL;
+	}
+
+	size_t new_cap = header->capacity ? header->capacity * SPDA_GROWTH_FACTOR
 	                                  : SPDA_DEFAULT_CAPACITY;
-	size_t new_size = sizeof(spda_header_t) + (new_cap * header->stride);
-	
+	size_t new_size;
+	if (!_spda_alloc_size(new_cap, header->stride, &new_size)) {
+		SPDA_ERR("SIZE_OVERFLOW", "Grown capacity * element size exceeds SIZE_MAX.");
+		return NULL;
+	}
+
 	spda_header_t *new_header = realloc(header, new_size);
 	if (new_header == NULL) {
 		SPDA_ERR("MEM_ALLOCATION", "Failed to reallocate the header and the array.");
@@ -270,14 +294,19 @@ SPDA_DEF void *_spda_resize(void *array, size_t size) {
 		return NULL;
 
 	spda_header_t *header = _spda_get_header(array);
-	
+
+	// Checked before clamping, so an oversized request leaves the array untouched
+	size_t new_size;
+	if (!_spda_alloc_size(size, header->stride, &new_size)) {
+		SPDA_ERR("SIZE_OVERFLOW", "Requested capacity * element size exceeds SIZE_MAX.");
+		return NULL;
+	}
+
 	if (header->length > size)  {
 		// Clamp the length to the new capacity
 		header->length = size;
 	}
-	
-	size_t new_size = sizeof(spda_header_t) + (size * header->stride);
-	
+
 	spda_header_t *new_header = realloc(header, new_size);
 	
 	if (new_header == NULL) {
@@ -339,15 +368,23 @@ SPDA_DEF void *_spda_append_many(void *array, void *items, size_t item_count) {
 	size_t len    = spda_len(array);
 	size_t cap    = spda_cap(array);
 	size_t stride = spda_stride(array);
+
+	if (item_count > SIZE_MAX - len) {
+		SPDA_ERR("SIZE_OVERFLOW", "Length + item count exceeds SIZE_MAX.");
+		return array;
+	}
 	size_t required = len + item_count;
-	
+
 	// Single resize upfront if needed, instead of realloc-ing on every boundary
 	if (required > cap) {
-		// Grow by GROWTH_FACTOR until capacity fits required
-		size_t new_cap = cap;
+		// Grow by GROWTH_FACTOR until capacity fits required. Start from the
+		// default when cap is 0 (0 * factor never grows), and jump straight to
+		// `required` if another doubling would overflow.
+		size_t new_cap = cap ? cap : SPDA_DEFAULT_CAPACITY;
 		while (new_cap < required)
-		new_cap *= SPDA_GROWTH_FACTOR;
-		
+			new_cap = new_cap > SIZE_MAX / SPDA_GROWTH_FACTOR ? required
+			                                                  : new_cap * SPDA_GROWTH_FACTOR;
+
 		void *resized = _spda_resize(array, new_cap);
 		if (resized == NULL) {
 			SPDA_ERR("MEM_ALLOCATION", "Failed to resize array in append_many");
