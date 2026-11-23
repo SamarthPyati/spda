@@ -74,15 +74,55 @@ _Static_assert(sizeof(spda_header_t) == (4 * sizeof(size_t) + 15) / 16 * 16,
 #define SPDA_GROWTH_FACTOR 2
 #define SPDA_SHRINK_THRESHOLD 0.25 // if array utilisation falls below 25% shrink the capacity of array 
 
-/* ERROR HANDLING */
-#define SPDA_ERR(etype, msg)                                                            \
-    do {                                                                                \
-        fprintf(stderr, "%s:%d [%s] - %s\n", __FILE__, __LINE__, etype, msg);           \
-    } while (0)     
+/* ERROR HANDLING
+ *
+ * Every function that can fail records the outcome of its most recent call
+ * in a per-thread error code: SPDA_OK on success, otherwise the reason.
+ * Read it with spda_last_error(); spda_strerror() turns it into text.
+ *
+ *     spda_append(a, x);
+ *     if (spda_last_error() != SPDA_OK) { ... }
+ *
+ * On failure nothing is modified. Functions returning the array return the
+ * one they were given, _spda_create / spda_copy return NULL, and functions
+ * returning bool return false. The accessors (spda_len, spda_cap,
+ * spda_stride) and the spda_fmt_* printers never change the error code.
+ */
+typedef enum {
+    SPDA_OK = 0,
+    SPDA_ERR_NOMEM,          // memory allocation failed
+    SPDA_ERR_INVALID_ARRAY,  // array is NULL, destroyed, or not created by spda
+    SPDA_ERR_INVALID_ARG,    // another argument is invalid (NULL pointer, zero element size)
+    SPDA_ERR_OUT_OF_BOUNDS,  // index, range or length outside the array
+    SPDA_ERR_OVERFLOW,       // requested size does not fit in size_t
+} spda_err_t;
+
+SPDA_DEF spda_err_t spda_last_error(void);           // outcome of the last spda call on this thread
+SPDA_DEF const char *spda_strerror(spda_err_t err);  // short description of an error code
+
+/* Diagnostics: every failure is logged to stderr by default. Define
+   SPDA_NO_LOG to silence it (the error code is still recorded), or define
+   SPDA_LOG(err, func, msg) yourself to route it elsewhere. */
+#ifndef SPDA_LOG
+    #ifdef SPDA_NO_LOG
+        #define SPDA_LOG(err, func, msg) ((void)(err), (void)(func), (void)(msg))
+    #else
+        #define SPDA_LOG(err, func, msg) \
+            fprintf(stderr, "spda: %s: %s (%s)\n", (func), (msg), spda_strerror(err))
+    #endif
+#endif
+
+// Per-thread error storage. Override if your compiler lacks C11 _Thread_local. 
+#ifndef SPDA_THREAD_LOCAL
+    #define SPDA_THREAD_LOCAL _Thread_local
+#endif
+
+// Internal: record a failure (and log it) from inside a library function. 
+#define SPDA_ERR(code, msg) _spda_set_error((code), __func__, (msg))
 
 #define SPDA_COUNTOF(xs) (sizeof((xs)) / sizeof((xs)[0]))
 
-/* To use your own alloctors define the following */
+// To use your own alloctors define the following 
 #if !defined(SPDA_MALLOC) && !defined(SPDA_REALLOC) && !defined(SPDA_FREE)
     #define SPDA_MALLOC(size)       malloc(size)
     #define SPDA_REALLOC(ptr, size) realloc((ptr), (size))
@@ -100,17 +140,17 @@ static inline spda_header_t* _spda_get_header(const void *array) {
     return array ? (spda_header_t *)array - 1 : NULL;
 }
 
-/* True for a live array created by spda. Best effort: it still reads the
-   header bytes before `array`, so a pointer with no readable memory in front
-   of it is undefined behaviour. In practice it rejects foreign buffers and
-   destroyed arrays instead of letting them corrupt memory. */
+// True for a live array created by spda. Best effort: it still reads the
+// header bytes before `array`, so a pointer with no readable memory in front
+// of it is undefined behaviour. In practice it rejects foreign buffers and
+// destroyed arrays instead of letting them corrupt memory. 
 static inline bool _spda_is_valid(const void *array) {
 	if (array == NULL) return false;
 	const spda_header_t *header = _spda_get_header(array);
 	return header->magic == SPDA_MAGIC && header->stride > 0;
 }
 
-/* Accessors return 0 for anything that is not a live spda array. */
+// Accessors return 0 for anything that is not a live spda array.
 static inline size_t spda_len(const void *array) {
     return _spda_is_valid(array) ? _spda_get_header(array)->length : 0;
 }
@@ -254,25 +294,55 @@ SPDA_DEF void spda_fmt_str(FILE *o, const void *e);
 #if defined(SPDA_IMPLEMENTATION) && !defined(SPDA_IMPLEMENTATION_GUARD_)
 #define SPDA_IMPLEMENTATION_GUARD_
 
+/* Error state */
+static SPDA_THREAD_LOCAL spda_err_t _spda_last_err = SPDA_OK;
+
+static void _spda_set_error(spda_err_t err, const char *func, const char *msg) {
+	_spda_last_err = err;
+	SPDA_LOG(err, func, msg);
+}
+
+static inline void _spda_clear_error(void) {
+	_spda_last_err = SPDA_OK;
+}
+
+SPDA_DEF spda_err_t spda_last_error(void) {
+	return _spda_last_err;
+}
+
+SPDA_DEF const char *spda_strerror(spda_err_t err) {
+	switch (err) {
+		case SPDA_OK:                return "no error";
+		case SPDA_ERR_NOMEM:         return "out of memory";
+		case SPDA_ERR_INVALID_ARRAY: return "invalid array";
+		case SPDA_ERR_INVALID_ARG:   return "invalid argument";
+		case SPDA_ERR_OUT_OF_BOUNDS: return "index out of bounds";
+		case SPDA_ERR_OVERFLOW:      return "size overflow";
+	}
+	return "unknown error";
+}
+
+/* Core */
+
 SPDA_DEF void *_spda_create(size_t capacity, size_t stride) {
 	if (capacity < SPDA_DEFAULT_CAPACITY)
 		capacity = SPDA_DEFAULT_CAPACITY;
 
 	if (stride == 0) {
-		SPDA_ERR("INVALID_ARGUMENT", "Stride (size of datatype) cannot be zero");
+		SPDA_ERR(SPDA_ERR_INVALID_ARG, "Stride (size of datatype) cannot be zero");
 		return NULL;
 	}
 
 	size_t total_size;
 	if (!_spda_alloc_size(capacity, stride, &total_size)) {
-		SPDA_ERR("SIZE_OVERFLOW", "Capacity * element size exceeds SIZE_MAX.");
+		SPDA_ERR(SPDA_ERR_OVERFLOW, "Capacity * element size exceeds SIZE_MAX.");
 		return NULL;
 	}
 
 	spda_header_t *array = (spda_header_t *)SPDA_MALLOC(total_size);
 	
 	if (!array) {
-		SPDA_ERR("MEM_ALLOCATION", "Failed memory allocation for dynamic array.");
+		SPDA_ERR(SPDA_ERR_NOMEM, "Failed memory allocation for dynamic array.");
 		return NULL;
 	}
 	
@@ -280,26 +350,37 @@ SPDA_DEF void *_spda_create(size_t capacity, size_t stride) {
 	array->length = 0;
 	array->stride = stride;
 	array->magic = SPDA_MAGIC;
+	_spda_clear_error();
 	return (void *)(array + 1);
 }
 
 SPDA_DEF void spda_destroy(void *array) {
-	if (!_spda_is_valid(array))
+	if (array == NULL) {   // like free(NULL): not an error
+		_spda_clear_error();
 		return;
+	}
+
+	if (!_spda_is_valid(array)) {
+		SPDA_ERR(SPDA_ERR_INVALID_ARRAY, "Pointer is not a live spda array (already destroyed?).");
+		return;
+	}
 
 	spda_header_t *header = _spda_get_header(array);
 	header->magic = 0;   // poison: a second destroy (or later use) is rejected
 	SPDA_FREE(header);
+	_spda_clear_error();
 }
 
 SPDA_DEF void *_spda_resize_def(void *array) {
-	if (!_spda_is_valid(array))
+	if (!_spda_is_valid(array)) {
+		SPDA_ERR(SPDA_ERR_INVALID_ARRAY, "Pointer not a spda compatible dynamic array.");
 		return array;
+	}
 
 	size_t cap = spda_cap(array);
 
 	if (cap > SIZE_MAX / SPDA_GROWTH_FACTOR) {
-		SPDA_ERR("SIZE_OVERFLOW", "Capacity cannot grow any further.");
+		SPDA_ERR(SPDA_ERR_OVERFLOW, "Capacity cannot grow any further.");
 		return array;
 	}
 
@@ -308,20 +389,22 @@ SPDA_DEF void *_spda_resize_def(void *array) {
 }
 
 SPDA_DEF void *_spda_resize(void *array, size_t size) {
-	if (!_spda_is_valid(array))
+	if (!_spda_is_valid(array)) {
+		SPDA_ERR(SPDA_ERR_INVALID_ARRAY, "Pointer not a spda compatible dynamic array.");
 		return array;
+	}
 
 	spda_header_t *header = _spda_get_header(array);
 
 	size_t new_size;
 	if (!_spda_alloc_size(size, header->stride, &new_size)) {
-		SPDA_ERR("SIZE_OVERFLOW", "Requested capacity * element size exceeds SIZE_MAX.");
+		SPDA_ERR(SPDA_ERR_OVERFLOW, "Requested capacity * element size exceeds SIZE_MAX.");
 		return array;
 	}
 
 	spda_header_t *new_header = SPDA_REALLOC(header, new_size);
 	if (new_header == NULL) {
-		SPDA_ERR("MEM_ALLOCATION", "Failed to reallocate the array; original left intact.");
+		SPDA_ERR(SPDA_ERR_NOMEM, "Failed to reallocate the array; original left intact.");
 		return array;
 	}
 
@@ -330,12 +413,15 @@ SPDA_DEF void *_spda_resize(void *array, size_t size) {
 	if (new_header->length > size)
 		new_header->length = size;
 
+	_spda_clear_error();
 	return (void *)(new_header + 1);
 }
 
 SPDA_DEF void *spda_shrink_to_fit(void *array) {
-	if (!_spda_is_valid(array))
+	if (!_spda_is_valid(array)) {
+		SPDA_ERR(SPDA_ERR_INVALID_ARRAY, "Pointer not a spda compatible dynamic array.");
 		return array;
+	}
 
 	size_t len = spda_len(array);
 	size_t cap = spda_cap(array);
@@ -345,12 +431,19 @@ SPDA_DEF void *spda_shrink_to_fit(void *array) {
 	// On failure _spda_resize returns the original, which is what we want too.
 	if (len > 0 && len * 4 < cap)
 		return _spda_resize(array, len * SPDA_GROWTH_FACTOR);
+
+	_spda_clear_error();   // nothing to shrink is still a success
 	return array;
 }
 
 SPDA_DEF void *_spda_append(void *array, const void *value) {
-	if (!_spda_is_valid(array) || !value) {
-		SPDA_ERR("INVALID_ARGUMENT", "Invalid array or value");
+	if (!_spda_is_valid(array)) {
+		SPDA_ERR(SPDA_ERR_INVALID_ARRAY, "Pointer not a spda compatible dynamic array.");
+		return array;
+	}
+
+	if (value == NULL) {
+		SPDA_ERR(SPDA_ERR_INVALID_ARG, "Value cannot be NULL.");
 		return array;
 	}
 	
@@ -365,19 +458,32 @@ SPDA_DEF void *_spda_append(void *array, const void *value) {
 	
 	memcpy((char *)array + length * stride, value, stride);
 	_spda_get_header(array)->length += 1; // increment length
+	_spda_clear_error();
 	return array;
 }
 
 SPDA_DEF void *_spda_append_many(void *array, const void *items, size_t item_count) {
-	if (!_spda_is_valid(array) || !items || item_count == 0)
+	if (!_spda_is_valid(array)) {
+		SPDA_ERR(SPDA_ERR_INVALID_ARRAY, "Pointer not a spda compatible dynamic array.");
 		return array;
+	}
+
+	if (item_count == 0) {   // nothing to add is a success
+		_spda_clear_error();
+		return array;
+	}
+
+	if (items == NULL) {
+		SPDA_ERR(SPDA_ERR_INVALID_ARG, "Items cannot be NULL when item count is non-zero.");
+		return array;
+	}
 	
 	size_t len    = spda_len(array);
 	size_t cap    = spda_cap(array);
 	size_t stride = spda_stride(array);
 
 	if (item_count > SIZE_MAX - len) {
-		SPDA_ERR("SIZE_OVERFLOW", "Length + item count exceeds SIZE_MAX.");
+		SPDA_ERR(SPDA_ERR_OVERFLOW, "Length + item count exceeds SIZE_MAX.");
 		return array;
 	}
 	size_t required = len + item_count;
@@ -395,7 +501,7 @@ SPDA_DEF void *_spda_append_many(void *array, const void *items, size_t item_cou
 		// uninitialised and would overlap the destination of the copy.
 		size_t live = len * stride;
 		if (offset > live || item_count > (live - offset) / stride) {
-			SPDA_ERR("INVALID_ARGUMENT", "Items overlap the array but extend past its length.");
+			SPDA_ERR(SPDA_ERR_INVALID_ARG, "Items overlap the array but extend past its length.");
 			return array;
 		}
 	}
@@ -420,18 +526,18 @@ SPDA_DEF void *_spda_append_many(void *array, const void *items, size_t item_cou
 
 	memcpy((char *)array + len * stride, items, item_count * stride);
 	_spda_get_header(array)->length = required;
-	
+	_spda_clear_error();
 	return array;
 }
 
 SPDA_DEF void *_spda_insert(void *array, size_t idx, const void *value) {
 	if (!_spda_is_valid(array)) {
-		SPDA_ERR("INVALID_ARRAY", "Pointer not a spda compatible dynamic array.");
+		SPDA_ERR(SPDA_ERR_INVALID_ARRAY, "Pointer not a spda compatible dynamic array.");
 		return array;
 	}
 
 	if (value == NULL) {
-		SPDA_ERR("INVALID_ARGUMENT", "Value cannot be NULL");
+		SPDA_ERR(SPDA_ERR_INVALID_ARG, "Value cannot be NULL");
 		return array;
 	}
 
@@ -440,7 +546,7 @@ SPDA_DEF void *_spda_insert(void *array, size_t idx, const void *value) {
 	size_t capacity = spda_cap(array);
 
 	if (idx > length) {
-		SPDA_ERR("INDEX_OUT_OF_BOUNDS", "Start index out of bounds for insert.");
+		SPDA_ERR(SPDA_ERR_OUT_OF_BOUNDS, "Start index out of bounds for insert.");
 		return array;
 	}
 
@@ -454,29 +560,38 @@ SPDA_DEF void *_spda_insert(void *array, size_t idx, const void *value) {
 		(length - idx) * stride);
 	memcpy((char *)array + idx * stride, value, stride);
 	_spda_get_header(array)->length += 1; 
+	_spda_clear_error();
 	return array;
 }
 
 SPDA_DEF bool _spda_remove(void *array, size_t idx, size_t count, void *dest) {
 	if (!_spda_is_valid(array)) {
-		SPDA_ERR("INVALID_ARRAY", "Pointer not a spda compatible dynamic array.");
+		SPDA_ERR(SPDA_ERR_INVALID_ARRAY, "Pointer not a spda compatible dynamic array.");
 		return false;
 	}
 
 	size_t length = spda_len(array);
 	size_t stride = spda_stride(array);
 
+	if (length == 0) {
+		SPDA_ERR(SPDA_ERR_OUT_OF_BOUNDS, "Cannot remove from an empty array.");
+		return false;
+	}
+
 	if (idx >= length) {
-		SPDA_ERR("INDEX_OUT_OF_BOUNDS", "Start index out of bounds for remove.");
+		SPDA_ERR(SPDA_ERR_OUT_OF_BOUNDS, "Start index out of bounds for remove.");
 		return false;
 	}
 	
 	if (count > length - idx) {
-		SPDA_ERR("INDEX_OUT_OF_BOUNDS", "Range exceeds array length for remove.");
+		SPDA_ERR(SPDA_ERR_OUT_OF_BOUNDS, "Range exceeds array length for remove.");
 		return false;
 	} 
 	
-	if (count == 0) return true;	// Nothing to be done
+	if (count == 0) {	// Nothing to be done
+		_spda_clear_error();
+		return true;
+	}
 
 	if (dest) {
 		memcpy(dest, (char *)array + idx * stride, count * stride);
@@ -486,20 +601,26 @@ SPDA_DEF bool _spda_remove(void *array, size_t idx, size_t count, void *dest) {
 	(length - idx - count) * stride);
 
 	_spda_get_header(array)->length -= count;
+	_spda_clear_error();
 	return true;
 }
 
 SPDA_DEF bool _spda_swap_remove(void *array, size_t idx, void *dest) {
     if (!_spda_is_valid(array)) {
-        SPDA_ERR("INVALID_ARRAY", "Pointer not a spda compatible dynamic array.");
+        SPDA_ERR(SPDA_ERR_INVALID_ARRAY, "Pointer not a spda compatible dynamic array.");
         return false;
     }
 
     size_t length = spda_len(array);
     size_t stride = spda_stride(array);
 
+    if (length == 0) {
+        SPDA_ERR(SPDA_ERR_OUT_OF_BOUNDS, "Cannot remove from an empty array.");
+        return false;
+    }
+
     if (idx >= length) {
-        SPDA_ERR("INDEX_OUT_OF_BOUNDS", "Index out of bounds for swap remove");
+        SPDA_ERR(SPDA_ERR_OUT_OF_BOUNDS, "Index out of bounds for swap remove");
         return false;
     }
 
@@ -510,12 +631,13 @@ SPDA_DEF bool _spda_swap_remove(void *array, size_t idx, void *dest) {
     if (slot != last) memcpy(slot, last, stride);  // fill the gap with the last one
 
     _spda_get_header(array)->length -= 1;
+    _spda_clear_error();
     return true;
 }
 
 SPDA_DEF void spda_reverse(void *array) {
 	if (!_spda_is_valid(array)) {
-		SPDA_ERR("INVALID_ARRAY", "Pointer not a spda compatible dynamic array.");
+		SPDA_ERR(SPDA_ERR_INVALID_ARRAY, "Pointer not a spda compatible dynamic array.");
 		return;
 	}
 	
@@ -524,7 +646,7 @@ SPDA_DEF void spda_reverse(void *array) {
 	char *temp = SPDA_MALLOC(stride);
 	
 	if (!temp) {
-		SPDA_ERR("MEM_ALLOCATION", "Failed to allocate temporary buffer");
+		SPDA_ERR(SPDA_ERR_NOMEM, "Failed to allocate temporary buffer");
 		return;
 	}
 	
@@ -536,26 +658,28 @@ SPDA_DEF void spda_reverse(void *array) {
 		memcpy(b, temp, stride);
 	}
 	SPDA_FREE(temp);
+	_spda_clear_error();
 }
 
 SPDA_DEF bool spda_set_length(void *array, size_t length) {
 	if (!_spda_is_valid(array)) {
-		SPDA_ERR("INVALID_ARRAY", "Pointer not a spda compatible dynamic array.");
+		SPDA_ERR(SPDA_ERR_INVALID_ARRAY, "Pointer not a spda compatible dynamic array.");
 		return false;
 	}
 
 	if (length > spda_cap(array)) {
-		SPDA_ERR("INDEX_OUT_OF_BOUNDS", "Provided length is greater than the capacity of array.");
+		SPDA_ERR(SPDA_ERR_OUT_OF_BOUNDS, "Provided length is greater than the capacity of array.");
 		return false;
 	}
 
 	_spda_get_header(array)->length = length;
+	_spda_clear_error();
 	return true;
 }
 
 SPDA_DEF void spda_clear(void *array) {
 	if (!_spda_is_valid(array)) {
-		SPDA_ERR("INVALID_ARRAY", "Pointer not a spda compatible dynamic array.");
+		SPDA_ERR(SPDA_ERR_INVALID_ARRAY, "Pointer not a spda compatible dynamic array.");
 		return;
 	}
 
@@ -564,7 +688,7 @@ SPDA_DEF void spda_clear(void *array) {
 
 SPDA_DEF void *spda_copy(void *src) {
 	if (!_spda_is_valid(src)) {
-		SPDA_ERR("INVALID_ARRAY", "Pointer not a spda compatible dynamic array.");
+		SPDA_ERR(SPDA_ERR_INVALID_ARRAY, "Pointer not a spda compatible dynamic array.");
 		return NULL;
 	}
 	
@@ -574,10 +698,8 @@ SPDA_DEF void *spda_copy(void *src) {
 	size_t header_size = sizeof(spda_header_t);
 	
 	void *_dst = _spda_create(capacity, stride);
-	if (_dst == NULL) {
-		SPDA_ERR("MEM_ALLOCATION", "Failed to allocate memory for the new array");
-		return NULL;
-	}
+	if (_dst == NULL)
+		return NULL;   // _spda_create has recorded the reason
 	
 	memcpy(
 		(spda_header_t *)_dst - 1, 
@@ -585,28 +707,39 @@ SPDA_DEF void *spda_copy(void *src) {
 		arr_size + header_size
 	);
 	
+	_spda_clear_error();
 	return (void *)_dst;
 }
 
 SPDA_DEF void spda_sort(void *array, int (*compar)(const void *, const void *)) {
 	if (!_spda_is_valid(array)) {
-		SPDA_ERR("INVALID_ARRAY", "Pointer not a spda compatible dynamic array.");
+		SPDA_ERR(SPDA_ERR_INVALID_ARRAY, "Pointer not a spda compatible dynamic array.");
 		return;
 	}
 
 	if (!compar) {
-		SPDA_ERR("INVALID_ARGUMENT", "Comparator cannot be NULL.");
+		SPDA_ERR(SPDA_ERR_INVALID_ARG, "Comparator cannot be NULL.");
 		return;
 	}
 
 	qsort(array, spda_len(array), spda_stride(array), compar);
+	_spda_clear_error();
 }
 
 SPDA_DEF void _spda_fprint(FILE *out, const void *array, spda_elem_fn pfn) {
-	if (!out || !pfn) return;
+	if (out == NULL) {
+		SPDA_ERR(SPDA_ERR_INVALID_ARG, "Output stream cannot be NULL.");
+		return;
+	}
+
+	if (pfn == NULL) {
+		SPDA_ERR(SPDA_ERR_INVALID_ARG, "Element printer cannot be NULL.");
+		return;
+	}
 
 	if (!_spda_is_valid(array)) {
-		fputs("NULL", out); 
+		fputs("NULL", out);   // still printable, but reported
+		SPDA_ERR(SPDA_ERR_INVALID_ARRAY, "Pointer not a spda compatible dynamic array.");
 		return;
 	}
 
@@ -619,6 +752,7 @@ SPDA_DEF void _spda_fprint(FILE *out, const void *array, spda_elem_fn pfn) {
 		pfn(out, (const char *)array + i * stride);
 	}
 	fputc(']', out);
+	_spda_clear_error();
 }
 
 /* Default `spda_elem_fn` element printers */

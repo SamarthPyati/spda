@@ -2020,6 +2020,396 @@ TEST(oom, invalid_array_pointer_preserved) {
 }
 
 /* ======================================================================== */
+/* Error reporting  (ISSUES.md S2)                                          */
+/* ======================================================================== */
+
+#define CHECK_ERR(expected) CHECK_EQ(spda_last_error(), (expected))
+
+/* ---- the error API ------------------------------------------------------- */
+
+TEST(error, strerror_covers_every_code) {
+    const spda_err_t codes[] = {
+        SPDA_OK, SPDA_ERR_NOMEM, SPDA_ERR_INVALID_ARRAY,
+        SPDA_ERR_INVALID_ARG, SPDA_ERR_OUT_OF_BOUNDS, SPDA_ERR_OVERFLOW,
+    };
+    const char *unknown = spda_strerror((spda_err_t)999);
+    REQUIRE(unknown != NULL);
+    for (size_t i = 0; i < SPDA_COUNTOF(codes); i++) {
+        const char *s = spda_strerror(codes[i]);
+        REQUIRE(s != NULL);
+        CHECK(s[0] != '\0');
+        CHECK(strcmp(s, unknown) != 0);
+        for (size_t j = 0; j < i; j++)          /* every message distinct */
+            CHECK(strcmp(s, spda_strerror(codes[j])) != 0);
+    }
+}
+
+TEST(error, starts_as_ok) {
+    CHECK_ERR(SPDA_OK);
+}
+
+TEST(error, success_clears_previous_error) {
+    int *a = make_seq(3);
+    spda_remove(a, 10);
+    CHECK_ERR(SPDA_ERR_OUT_OF_BOUNDS);
+    spda_append(a, 3);
+    CHECK_ERR(SPDA_OK);
+    spda_destroy(a);
+}
+
+TEST(error, accessors_do_not_touch_error) {
+    int *a = make_seq(3);
+    spda_remove(a, 10);
+    (void)spda_len(a);
+    (void)spda_cap(a);
+    (void)spda_stride(a);
+    CHECK_ERR(SPDA_ERR_OUT_OF_BOUNDS);
+    spda_destroy(a);
+}
+
+/* Redirect stderr into a temp file around a block of code. */
+static char g_stderr_buf[4096];
+static int  g_stderr_saved = -1;
+static FILE *g_stderr_sink;
+
+static void stderr_capture_begin(void) {
+    fflush(stderr);
+    g_stderr_sink = tmpfile();
+    g_stderr_saved = dup(STDERR_FILENO);
+    if (g_stderr_sink && g_stderr_saved >= 0)
+        dup2(fileno(g_stderr_sink), STDERR_FILENO);
+}
+
+static const char *stderr_capture_end(void) {
+    fflush(stderr);
+    g_stderr_buf[0] = '\0';
+    if (g_stderr_saved >= 0) {
+        dup2(g_stderr_saved, STDERR_FILENO);
+        close(g_stderr_saved);
+        g_stderr_saved = -1;
+    }
+    if (g_stderr_sink) {
+        rewind(g_stderr_sink);
+        size_t n = fread(g_stderr_buf, 1, sizeof g_stderr_buf - 1, g_stderr_sink);
+        g_stderr_buf[n] = '\0';
+        fclose(g_stderr_sink);
+        g_stderr_sink = NULL;
+    }
+    return g_stderr_buf;
+}
+
+/* Failures are logged to stderr by default: "spda: <func>: <msg> (<strerror>)". */
+TEST(error, failures_logged_by_default) {
+    int *a = make_seq(2);
+    stderr_capture_begin();
+    spda_remove(a, 5);
+    const char *log = stderr_capture_end();
+    CHECK(strncmp(log, "spda: ", 6) == 0);
+    CHECK(strstr(log, "_spda_remove") != NULL);
+    CHECK(strstr(log, "Start index out of bounds for remove.") != NULL);
+    CHECK(strstr(log, "(index out of bounds)") != NULL);
+    CHECK(log[0] != '\0' && log[strlen(log) - 1] == '\n');
+    spda_destroy(a);
+}
+
+/* One line per failure, each naming its own error. */
+TEST(error, each_failure_logged_once) {
+    int *n = NULL;
+    int *b = make_seq(2);
+    stderr_capture_begin();
+    spda_append(n, 1);
+    spda_sort(b, NULL);
+    fail_alloc_after(0);
+    spda_append_items(b, (int[]){1}, 100);
+    const char *log = stderr_capture_end();
+    size_t lines = 0;
+    for (const char *c = log; *c; c++) lines += (*c == '\n');
+    CHECK_EQ(lines, 3);
+    CHECK(strstr(log, "(invalid array)") != NULL);
+    CHECK(strstr(log, "(invalid argument)") != NULL);
+    CHECK(strstr(log, "(out of memory)") != NULL);
+    spda_destroy(b);
+}
+
+/* Successful calls print nothing. */
+TEST(error, success_logs_nothing) {
+    stderr_capture_begin();
+    int *a = make_seq(50);
+    spda_insert(a, 0, -1);
+    spda_remove(a, 0);
+    spda_reverse(a);
+    spda_sort(a, cmp_int);
+    a = spda_shrink_to_fit(a);
+    int *c = spda_copy(a);
+    spda_destroy(c);
+    spda_destroy(a);
+    spda_destroy((int *)NULL);
+    const char *log = stderr_capture_end();
+    CHECK_EQ(strlen(log), 0);
+}
+
+/* ---- create / destroy ---------------------------------------------------- */
+
+TEST(error, create_codes) {
+    CHECK(_spda_create(8, 0) == NULL);
+    CHECK_ERR(SPDA_ERR_INVALID_ARG);
+    CHECK(spda_reserve(int, SIZE_MAX) == NULL);
+    CHECK_ERR(SPDA_ERR_OVERFLOW);
+    fail_alloc_after(0);
+    CHECK(spda_create(int) == NULL);
+    CHECK_ERR(SPDA_ERR_NOMEM);
+    int *a = spda_create(int);
+    REQUIRE(a);
+    CHECK_ERR(SPDA_OK);
+    spda_destroy(a);
+}
+
+TEST(error, destroy_codes) {
+    spda_remove((int *)NULL, 0);                  /* set some error first */
+    spda_destroy((int *)NULL);
+    CHECK_ERR(SPDA_OK);                           /* like free(NULL) */
+    ForgedArray f;
+    spda_destroy(forge(&f, 0));
+    CHECK_ERR(SPDA_ERR_INVALID_ARRAY);
+    int *a = make_seq(2);
+    spda_destroy(a);
+    CHECK_ERR(SPDA_OK);
+}
+
+/* ---- append / append_many / insert --------------------------------------- */
+
+TEST(error, append_codes) {
+    int *n = NULL;
+    spda_append(n, 1);
+    CHECK_ERR(SPDA_ERR_INVALID_ARRAY);
+
+    int *a = make_full();
+    (void)_spda_append(a, NULL);
+    CHECK_ERR(SPDA_ERR_INVALID_ARG);
+
+    fail_alloc_after(0);
+    spda_append(a, 99);
+    CHECK_ERR(SPDA_ERR_NOMEM);
+    check_full_untouched(a);
+
+    spda_append(a, 99);
+    CHECK_ERR(SPDA_OK);
+    spda_destroy(a);
+}
+
+TEST(error, append_many_codes) {
+    int *a = make_seq(2);
+    int item = 5;
+
+    a = _spda_append_many(a, NULL, 3);
+    CHECK_ERR(SPDA_ERR_INVALID_ARG);
+    a = _spda_append_many(a, NULL, 0);           /* nothing to add: fine */
+    CHECK_ERR(SPDA_OK);
+
+    a = _spda_append_many(a, &item, SIZE_MAX);   /* len + count wraps */
+    CHECK_ERR(SPDA_ERR_OVERFLOW);
+    a = _spda_append_many(a, &item, SIZE_MAX / 2); /* bytes overflow */
+    CHECK_ERR(SPDA_ERR_OVERFLOW);
+
+    a = _spda_append_many(a, a + 1, 5);          /* alias past length */
+    CHECK_ERR(SPDA_ERR_INVALID_ARG);
+
+    int items[100] = {0};
+    fail_alloc_after(0);
+    spda_append_items(a, items, 100);
+    CHECK_ERR(SPDA_ERR_NOMEM);
+    CHECK_INTS(a, 0, 1);
+
+    spda_append_items(a, items, 100);
+    CHECK_ERR(SPDA_OK);
+    spda_destroy(a);
+}
+
+TEST(error, insert_codes) {
+    int *n = NULL;
+    spda_insert(n, 0, 1);
+    CHECK_ERR(SPDA_ERR_INVALID_ARRAY);
+
+    int *a = make_seq(3);
+    (void)_spda_insert(a, 0, NULL);
+    CHECK_ERR(SPDA_ERR_INVALID_ARG);
+    spda_insert(a, 4, 9);
+    CHECK_ERR(SPDA_ERR_OUT_OF_BOUNDS);
+    spda_insert(a, 3, 9);                         /* == length is allowed */
+    CHECK_ERR(SPDA_OK);
+    spda_destroy(a);
+
+    int *f = make_full();
+    fail_alloc_after(0);
+    spda_insert(f, 0, -1);
+    CHECK_ERR(SPDA_ERR_NOMEM);
+    check_full_untouched(f);
+    spda_destroy(f);
+}
+
+/* ---- remove / pop / swap ------------------------------------------------- */
+
+TEST(error, remove_codes) {
+    CHECK(!spda_remove((int *)NULL, 0));
+    CHECK_ERR(SPDA_ERR_INVALID_ARRAY);
+
+    int *a = make_seq(3);
+    CHECK(!spda_remove(a, 3));
+    CHECK_ERR(SPDA_ERR_OUT_OF_BOUNDS);
+    CHECK(!spda_remove_range(a, 1, 5));
+    CHECK_ERR(SPDA_ERR_OUT_OF_BOUNDS);
+    CHECK(spda_remove_range(a, 1, 0));
+    CHECK_ERR(SPDA_OK);
+    CHECK(!spda_swap_remove(a, 3));
+    CHECK_ERR(SPDA_ERR_OUT_OF_BOUNDS);
+    CHECK(spda_swap_remove(a, 0));
+    CHECK_ERR(SPDA_OK);
+    CHECK(spda_pop(a));
+    CHECK_ERR(SPDA_OK);
+    spda_destroy(a);
+}
+
+TEST(error, pop_empty) {
+    int *a = spda_create(int);
+    int out = 7;
+    CHECK(!spda_pop(a));
+    CHECK_ERR(SPDA_ERR_OUT_OF_BOUNDS);
+    CHECK(!spda_pop_into(a, &out));
+    CHECK_ERR(SPDA_ERR_OUT_OF_BOUNDS);
+    CHECK_EQ(out, 7);
+    CHECK(!spda_swap_remove(a, 0));
+    CHECK_ERR(SPDA_ERR_OUT_OF_BOUNDS);
+    spda_destroy(a);
+}
+
+/* ---- resize / shrink / length -------------------------------------------- */
+
+TEST(error, resize_codes) {
+    CHECK(_spda_resize(NULL, 10) == NULL);
+    CHECK_ERR(SPDA_ERR_INVALID_ARRAY);
+    CHECK(_spda_resize_def(NULL) == NULL);
+    CHECK_ERR(SPDA_ERR_INVALID_ARRAY);
+    CHECK(spda_shrink_to_fit(NULL) == NULL);
+    CHECK_ERR(SPDA_ERR_INVALID_ARRAY);
+
+    int *a = make_seq(4);
+    a = _spda_resize(a, SIZE_MAX);
+    CHECK_ERR(SPDA_ERR_OVERFLOW);
+    fail_alloc_after(0);
+    a = _spda_resize(a, 1000);
+    CHECK_ERR(SPDA_ERR_NOMEM);
+    fail_alloc_after(0);
+    a = _spda_resize_def(a);
+    CHECK_ERR(SPDA_ERR_NOMEM);
+
+    size_t real_cap = spda_cap(a);
+    _spda_get_header(a)->capacity = SIZE_MAX / 2 + 1;
+    a = _spda_resize_def(a);
+    CHECK_ERR(SPDA_ERR_OVERFLOW);
+    _spda_get_header(a)->capacity = real_cap;
+
+    a = _spda_resize(a, 100);
+    CHECK_ERR(SPDA_OK);
+    CHECK_INTS(a, 0, 1, 2, 3);
+    spda_destroy(a);
+}
+
+TEST(error, shrink_codes) {
+    int *a = make_seq(SPDA_DEFAULT_CAPACITY);
+    a = spda_shrink_to_fit(a);                    /* nothing to do */
+    CHECK_ERR(SPDA_OK);
+    while (spda_len(a) > 2) spda_pop(a);
+    fail_alloc_after(0);
+    a = spda_shrink_to_fit(a);
+    CHECK_ERR(SPDA_ERR_NOMEM);
+    a = spda_shrink_to_fit(a);
+    CHECK_ERR(SPDA_OK);
+    spda_destroy(a);
+}
+
+TEST(error, length_codes) {
+    spda_clear((int *)NULL);
+    CHECK_ERR(SPDA_ERR_INVALID_ARRAY);
+    int *a = make_seq(5);
+    CHECK(!spda_set_length(a, spda_cap(a) + 1));
+    CHECK_ERR(SPDA_ERR_OUT_OF_BOUNDS);
+    CHECK_EQ(spda_len(a), 5);
+    CHECK(spda_set_length(a, 2));
+    CHECK_ERR(SPDA_OK);
+    spda_clear(a);
+    CHECK_ERR(SPDA_OK);
+    spda_destroy(a);
+}
+
+/* ---- copy / reverse / sort / print --------------------------------------- */
+
+TEST(error, copy_codes) {
+    CHECK(spda_copy(NULL) == NULL);
+    CHECK_ERR(SPDA_ERR_INVALID_ARRAY);
+    int *a = make_seq(5);
+    fail_alloc_after(0);
+    CHECK(spda_copy(a) == NULL);
+    CHECK_ERR(SPDA_ERR_NOMEM);
+    int *c = spda_copy(a);
+    REQUIRE(c);
+    CHECK_ERR(SPDA_OK);
+    spda_destroy(a);
+    spda_destroy(c);
+}
+
+TEST(error, reverse_codes) {
+    spda_reverse((int *)NULL);
+    CHECK_ERR(SPDA_ERR_INVALID_ARRAY);
+    int *a = make_seq(4);
+    fail_alloc_after(0);
+    spda_reverse(a);
+    CHECK_ERR(SPDA_ERR_NOMEM);
+    CHECK_INTS(a, 0, 1, 2, 3);
+    spda_reverse(a);
+    CHECK_ERR(SPDA_OK);
+    CHECK_INTS(a, 3, 2, 1, 0);
+    spda_destroy(a);
+}
+
+TEST(error, sort_codes) {
+    spda_sort((int *)NULL, cmp_int);
+    CHECK_ERR(SPDA_ERR_INVALID_ARRAY);
+    int *a = make_seq(3);
+    spda_reverse(a);
+    spda_sort(a, NULL);
+    CHECK_ERR(SPDA_ERR_INVALID_ARG);
+    CHECK_INTS(a, 2, 1, 0);
+    spda_sort(a, cmp_int);
+    CHECK_ERR(SPDA_OK);
+    spda_destroy(a);
+}
+
+TEST(error, print_codes) {
+    int *a = make_seq(2);
+    spda_fprint(NULL, a);
+    CHECK_ERR(SPDA_ERR_INVALID_ARG);
+    CHECK_PRINTS(spda_fprint_with(f, a, NULL), "");
+    CHECK_ERR(SPDA_ERR_INVALID_ARG);
+    int *n = NULL;
+    CHECK_PRINTS(spda_fprint(f, n), "NULL");
+    CHECK_ERR(SPDA_ERR_INVALID_ARRAY);
+    CHECK_PRINTS(spda_fprint(f, a), "[0, 1]");
+    CHECK_ERR(SPDA_OK);
+    spda_destroy(a);
+}
+
+/* Forged and destroyed arrays report INVALID_ARRAY rather than a misleading
+   OUT_OF_BOUNDS from the zero length the accessors return. */
+TEST(error, forged_array_reports_invalid) {
+    ForgedArray f;
+    int *p = forge(&f, 0);
+    CHECK(!spda_remove(p, 0));
+    CHECK_ERR(SPDA_ERR_INVALID_ARRAY);
+    (void)_spda_append(p, &(int){1});
+    CHECK_ERR(SPDA_ERR_INVALID_ARRAY);
+}
+
+/* ======================================================================== */
 /* Randomised comparison against a plain C array                            */
 /* ======================================================================== */
 
