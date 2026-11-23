@@ -1737,6 +1737,125 @@ TEST(self_append, other_array_unaffected) {
 }
 
 /* ======================================================================== */
+/* Header signature / validity  (ISSUES.md S3)                              */
+/* ======================================================================== */
+
+/* A fake array: a real header struct followed by element storage, but never
+   created by spda. stride > 0, so the old `stride > 0` check accepted it. */
+typedef struct {
+    spda_header_t h;
+    int data[8];
+} ForgedArray;
+
+static int *forge(ForgedArray *f, size_t magic) {
+    memset(f, 0, sizeof *f);
+    f->h.capacity = 8;
+    f->h.length = 4;
+    f->h.stride = sizeof(int);
+    f->h.magic = magic;
+    for (int i = 0; i < 4; i++) f->data[i] = i;
+    return (int *)(&f->h + 1);
+}
+
+TEST(magic, header_size_unchanged) {
+    /* The signature lives in what was alignment padding. */
+    CHECK_EQ(sizeof(spda_header_t), sizeof(size_t) == 8 ? 32 : 16);
+}
+
+TEST(magic, live_arrays_are_valid) {
+    int *a = make_seq(3);
+    CHECK(_spda_is_valid(a));
+    for (int i = 0; i < 500; i++) spda_append(a, i);   /* realloc keeps it */
+    CHECK(_spda_is_valid(a));
+    a = spda_shrink_to_fit(a);
+    CHECK(_spda_is_valid(a));
+    int *c = spda_copy(a);                             /* copy inherits it */
+    REQUIRE(c);
+    CHECK(_spda_is_valid(c));
+    spda_destroy(a);
+    spda_destroy(c);
+}
+
+TEST(magic, forged_header_rejected) {
+    ForgedArray f;
+    int *p = forge(&f, 0);
+    CHECK(!_spda_is_valid(p));
+    CHECK_EQ(spda_len(p), 0);
+    CHECK_EQ(spda_cap(p), 0);
+    CHECK_EQ(spda_stride(p), 0);
+}
+
+/* The forged array has room (len 4 < cap 8), so without the signature check
+   these would write into it. Every call must leave it untouched. */
+TEST(magic, every_operation_rejects_forged) {
+    ForgedArray f;
+    int *p = forge(&f, 0);
+    int v = 99, out = 77;
+
+    /* Called directly (not via the assigning macros) so this test checks the
+       signature only, independent of what each function returns on failure. */
+    (void)_spda_append(p, &v);
+    (void)_spda_append_many(p, &v, 1);
+    (void)_spda_insert(p, 0, &v);
+    (void)_spda_resize(p, 100);
+    (void)_spda_resize_def(p);
+    (void)spda_shrink_to_fit(p);
+    CHECK(!spda_remove(p, 0));
+    CHECK(!spda_remove_into(p, 0, &out));
+    CHECK(!spda_swap_remove(p, 0));
+    CHECK(!spda_pop(p));
+    CHECK(!spda_set_length(p, 2));
+    spda_clear(p);
+    spda_reverse(p);
+    spda_sort(p, cmp_int);
+    CHECK(spda_copy(p) == NULL);
+    CHECK_PRINTS(spda_fprint(f, p), "NULL");
+    spda_destroy(p);                     /* must not free() a stack object */
+
+    CHECK_EQ(out, 77);
+    CHECK_EQ(f.h.length, 4);
+    CHECK_EQ(f.h.capacity, 8);
+    for (int i = 0; i < 4; i++) CHECK_EQ(f.data[i], i);
+}
+
+TEST(magic, wrong_magic_value_rejected) {
+    ForgedArray f;
+    CHECK(!_spda_is_valid(forge(&f, SPDA_MAGIC ^ 1)));
+    CHECK(!_spda_is_valid(forge(&f, ~SPDA_MAGIC)));
+    CHECK(_spda_is_valid(forge(&f, SPDA_MAGIC)));   /* control: real signature */
+}
+
+/* Zero-filled memory in front of a pointer (e.g. a calloc'd or static
+   buffer) is not an array. */
+TEST(magic, zeroed_memory_rejected) {
+    _Alignas(16) static unsigned char buf[256];
+    int *p = (int *)(buf + 64);
+    CHECK(!_spda_is_valid(p));
+    spda_append(p, 1);
+    CHECK_EQ(((int *)(buf + 64))[0], 0);
+}
+
+/* Detecting a double destroy has to read freed memory, which ASan reports
+   by design, so this check only runs without it. */
+#if defined(__has_feature)
+#  if __has_feature(address_sanitizer)
+#    define SPDA_TEST_ASAN 1
+#  endif
+#endif
+#if defined(__SANITIZE_ADDRESS__)
+#  define SPDA_TEST_ASAN 1
+#endif
+
+#ifndef SPDA_TEST_ASAN
+TEST(magic, destroy_poisons_signature) {
+    int *a = make_seq(3);
+    spda_destroy(a);
+    CHECK(!_spda_is_valid(a));
+    spda_destroy(a);                     /* second destroy is a no-op, not a double free */
+}
+#endif
+
+/* ======================================================================== */
 /* Randomised comparison against a plain C array                            */
 /* ======================================================================== */
 

@@ -41,12 +41,17 @@ typedef struct {
     _Alignas(max_align_t) _Alignas(16) size_t capacity;
     size_t length;
     size_t stride;
+    size_t magic;
 } spda_header_t;
+
+#define SPDA_MAGIC ((size_t)0x5350444153504441ull)
 
 _Static_assert(sizeof(spda_header_t) % _Alignof(max_align_t) == 0,
                "spda: header size must preserve max_align_t alignment of elements");
 _Static_assert(sizeof(spda_header_t) % 16 == 0,
                "spda: header size must preserve 16-byte alignment of elements");
+_Static_assert(sizeof(spda_header_t) == (4 * sizeof(size_t) + 15) / 16 * 16,
+               "spda: magic must fit in the header's alignment padding");
 
 #ifndef SPDA_DEFAULT_CAPACITY
     #define SPDA_DEFAULT_CAPACITY 32
@@ -86,20 +91,27 @@ static inline spda_header_t* _spda_get_header(const void *array) {
     return array ? (spda_header_t *)array - 1 : NULL;
 }
 
+/* True for a live array created by spda. Best effort: it still reads the
+   header bytes before `array`, so a pointer with no readable memory in front
+   of it is undefined behaviour. In practice it rejects foreign buffers and
+   destroyed arrays instead of letting them corrupt memory. */
+static inline bool _spda_is_valid(const void *array) {
+	if (array == NULL) return false;
+	const spda_header_t *header = _spda_get_header(array);
+	return header->magic == SPDA_MAGIC && header->stride > 0;
+}
+
+/* Accessors return 0 for anything that is not a live spda array. */
 static inline size_t spda_len(const void *array) {
-    return array ? _spda_get_header(array)->length : 0;
+    return _spda_is_valid(array) ? _spda_get_header(array)->length : 0;
 }
 
 static inline size_t spda_cap(const void *array) {
-    return array ? _spda_get_header(array)->capacity : 0;
+    return _spda_is_valid(array) ? _spda_get_header(array)->capacity : 0;
 }
 
 static inline size_t spda_stride(const void *array) {
-    return array ? _spda_get_header(array)->stride : 0;
-}
-
-static inline bool _spda_is_valid(const void *array) {
-	return spda_stride(array) > 0;
+    return _spda_is_valid(array) ? _spda_get_header(array)->stride : 0;
 }
 
 /* Helpers */
@@ -258,14 +270,16 @@ SPDA_DEF void *_spda_create(size_t capacity, size_t stride) {
 	array->capacity = capacity;
 	array->length = 0;
 	array->stride = stride;
+	array->magic = SPDA_MAGIC;
 	return (void *)(array + 1);
 }
 
 SPDA_DEF void spda_destroy(void *array) {
 	if (!_spda_is_valid(array))
 		return;
-	
+
 	spda_header_t *header = _spda_get_header(array);
+	header->magic = 0;   // poison: a second destroy (or later use) is rejected
 	free(header);
 }
 
