@@ -82,6 +82,15 @@ _Static_assert(sizeof(spda_header_t) == (4 * sizeof(size_t) + 15) / 16 * 16,
 
 #define SPDA_COUNTOF(xs) (sizeof((xs)) / sizeof((xs)[0]))
 
+/* To use your own alloctors define the following */
+#if !defined(SPDA_MALLOC) && !defined(SPDA_REALLOC) && !defined(SPDA_FREE)
+    #define SPDA_MALLOC(size)       malloc(size)
+    #define SPDA_REALLOC(ptr, size) realloc((ptr), (size))
+    #define SPDA_FREE(ptr)          free(ptr)
+#elif !defined(SPDA_MALLOC) || !defined(SPDA_REALLOC) || !defined(SPDA_FREE)
+    #error "spda: define all SPDA_MALLOC, SPDA_REALLOC and SPDA_FREE, or neither of them"
+#endif
+
 /* Core Operations */
 SPDA_DEF void *_spda_create(size_t cap, size_t stride);
 SPDA_DEF void spda_destroy(void *array);
@@ -260,7 +269,7 @@ SPDA_DEF void *_spda_create(size_t capacity, size_t stride) {
 		return NULL;
 	}
 
-	spda_header_t *array = (spda_header_t *)malloc(total_size);
+	spda_header_t *array = (spda_header_t *)SPDA_MALLOC(total_size);
 	
 	if (!array) {
 		SPDA_ERR("MEM_ALLOCATION", "Failed memory allocation for dynamic array.");
@@ -280,36 +289,22 @@ SPDA_DEF void spda_destroy(void *array) {
 
 	spda_header_t *header = _spda_get_header(array);
 	header->magic = 0;   // poison: a second destroy (or later use) is rejected
-	free(header);
+	SPDA_FREE(header);
 }
 
 SPDA_DEF void *_spda_resize_def(void *array) {
 	if (!_spda_is_valid(array))
-		return NULL;
-	
-	spda_header_t *header = _spda_get_header(array);
+		return array;
 
-	if (header->capacity > SIZE_MAX / SPDA_GROWTH_FACTOR) {
+	size_t cap = spda_cap(array);
+
+	if (cap > SIZE_MAX / SPDA_GROWTH_FACTOR) {
 		SPDA_ERR("SIZE_OVERFLOW", "Capacity cannot grow any further.");
-		return NULL;
+		return array;
 	}
 
-	size_t new_cap = header->capacity ? header->capacity * SPDA_GROWTH_FACTOR
-	                                  : SPDA_DEFAULT_CAPACITY;
-	size_t new_size;
-	if (!_spda_alloc_size(new_cap, header->stride, &new_size)) {
-		SPDA_ERR("SIZE_OVERFLOW", "Grown capacity * element size exceeds SIZE_MAX.");
-		return NULL;
-	}
-
-	spda_header_t *new_header = realloc(header, new_size);
-	if (new_header == NULL) {
-		SPDA_ERR("MEM_ALLOCATION", "Failed to reallocate the header and the array.");
-		return NULL;
-	}
-	
-	new_header->capacity = new_cap;
-	return (void *)(new_header + 1);  
+	size_t new_cap = cap ? cap * SPDA_GROWTH_FACTOR : SPDA_DEFAULT_CAPACITY;
+	return _spda_resize(array, new_cap);
 }
 
 SPDA_DEF void *_spda_resize(void *array, size_t size) {
@@ -318,46 +313,38 @@ SPDA_DEF void *_spda_resize(void *array, size_t size) {
 
 	spda_header_t *header = _spda_get_header(array);
 
-	// Checked before clamping, so an oversized request leaves the array untouched
 	size_t new_size;
 	if (!_spda_alloc_size(size, header->stride, &new_size)) {
 		SPDA_ERR("SIZE_OVERFLOW", "Requested capacity * element size exceeds SIZE_MAX.");
 		return array;
 	}
 
-	if (header->length > size)  {
-		// Clamp the length to the new capacity
-		header->length = size;
+	spda_header_t *new_header = SPDA_REALLOC(header, new_size);
+	if (new_header == NULL) {
+		SPDA_ERR("MEM_ALLOCATION", "Failed to reallocate the array; original left intact.");
+		return array;
 	}
 
-	spda_header_t *new_header = realloc(header, new_size);
-	
-	if (new_header == NULL) {
-		SPDA_ERR("MEM_ALLOCATION", "Failed to reallocate the array header.");
-		return NULL;
-	}
-	
+	// Clamp only after realloc succeeds, so a failed shrink loses no elements
 	new_header->capacity = size;
+	if (new_header->length > size)
+		new_header->length = size;
+
 	return (void *)(new_header + 1);
 }
 
 SPDA_DEF void *spda_shrink_to_fit(void *array) {
 	if (!_spda_is_valid(array))
-		return NULL;
-	
+		return array;
+
 	size_t len = spda_len(array);
 	size_t cap = spda_cap(array);
-	
+
 	// Integer-only threshold check: equivalent to len < cap * 0.25
-	// avoids implicit size_t -> double promotion in the original
-	if (len > 0 && len * 4 < cap) {
-		void *new_array = _spda_resize(array, len * SPDA_GROWTH_FACTOR);
-		if (new_array == NULL) {
-			SPDA_ERR("MEM_ALLOCATION", "Failed to shrink array");
-			return array;  // return original on failure, not NULL
-		}
-		return new_array;
-	}
+	// avoids implicit size_t -> double promotion in the original.
+	// On failure _spda_resize returns the original, which is what we want too.
+	if (len > 0 && len * 4 < cap)
+		return _spda_resize(array, len * SPDA_GROWTH_FACTOR);
 	return array;
 }
 
@@ -371,12 +358,9 @@ SPDA_DEF void *_spda_append(void *array, const void *value) {
 	size_t stride = spda_stride(array);
 	size_t capacity = spda_cap(array);
 	if (length >= capacity) {
-		void *new_array = _spda_resize_def(array);
-		if (new_array == NULL) {
-			SPDA_ERR("MEM_ALLOCATION", "Failed to resize array");
-			return array; 
-		}
-		array = new_array;
+		array = _spda_resize_def(array);
+		if (spda_cap(array) <= length)   // grow failed: array returned unchanged
+			return array;
 	}
 	
 	memcpy((char *)array + length * stride, value, stride);
@@ -426,12 +410,9 @@ SPDA_DEF void *_spda_append_many(void *array, const void *items, size_t item_cou
 			new_cap = new_cap > SIZE_MAX / SPDA_GROWTH_FACTOR ? required
 			                                                  : new_cap * SPDA_GROWTH_FACTOR;
 
-		void *resized = _spda_resize(array, new_cap);
-		if (resized == NULL) {
-			SPDA_ERR("MEM_ALLOCATION", "Failed to resize array in append_many");
+		array = _spda_resize(array, new_cap);
+		if (spda_cap(array) < required)  // resize failed: array returned unchanged
 			return array;
-		}
-		array = resized;
 	}
 
 	if (aliased)
@@ -446,7 +427,7 @@ SPDA_DEF void *_spda_append_many(void *array, const void *items, size_t item_cou
 SPDA_DEF void *_spda_insert(void *array, size_t idx, const void *value) {
 	if (!_spda_is_valid(array)) {
 		SPDA_ERR("INVALID_ARRAY", "Pointer not a spda compatible dynamic array.");
-		return NULL;
+		return array;
 	}
 
 	if (value == NULL) {
@@ -464,12 +445,9 @@ SPDA_DEF void *_spda_insert(void *array, size_t idx, const void *value) {
 	}
 
 	if (length >= capacity) {
-		void *tmp = _spda_resize_def(array);
-		if (tmp == NULL) {
-			SPDA_ERR("MEM_ALLOCATION", "Failed to resize array in insert");
-			return array; // original is still valid; nothing inserted
-		}
-		array = tmp;
+		array = _spda_resize_def(array);
+		if (spda_cap(array) <= length)   // grow failed: nothing inserted
+			return array;
 	}
 
 	memmove((char *)array + (idx + 1) * stride, (char *)array + idx * stride,
@@ -543,7 +521,7 @@ SPDA_DEF void spda_reverse(void *array) {
 	
 	size_t stride = spda_stride(array);
 	size_t len = spda_len(array);
-	char *temp = malloc(stride);
+	char *temp = SPDA_MALLOC(stride);
 	
 	if (!temp) {
 		SPDA_ERR("MEM_ALLOCATION", "Failed to allocate temporary buffer");
@@ -557,7 +535,7 @@ SPDA_DEF void spda_reverse(void *array) {
 		memcpy(a, b, stride);
 		memcpy(b, temp, stride);
 	}
-	free(temp);
+	SPDA_FREE(temp);
 }
 
 SPDA_DEF bool spda_set_length(void *array, size_t length) {

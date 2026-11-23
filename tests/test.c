@@ -27,6 +27,21 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+/* Fault injection: fail_alloc_after(n) makes the allocation n calls from now
+   fail (0 = the very next one), once. Lets tests reach out-of-memory paths. */
+static long g_alloc_fail_in = -1;
+
+static int alloc_should_fail(void) {
+    if (g_alloc_fail_in < 0) return 0;
+    return g_alloc_fail_in-- == 0;
+}
+
+static void fail_alloc_after(long n) { g_alloc_fail_in = n; }
+
+#define SPDA_MALLOC(size)       (alloc_should_fail() ? NULL : malloc(size))
+#define SPDA_REALLOC(ptr, size) (alloc_should_fail() ? NULL : realloc((ptr), (size)))
+#define SPDA_FREE(ptr)          free(ptr)
+
 #define SPDA_IMPLEMENTATION
 #include "../spda.h"
 
@@ -1576,7 +1591,7 @@ TEST(overflow, resize_rejected_before_clamp) {
     int *a = make_seq(10);
     size_t cap = spda_cap(a);
     int *r = _spda_resize(a, SIZE_MAX / 2);
-    CHECK(r == NULL);
+    CHECK(r == a);                       /* failure returns the original */
     CHECK_EQ(spda_cap(a), cap);
     CHECK_INTS(a, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
     spda_destroy(a);
@@ -1588,7 +1603,8 @@ TEST(overflow, resize_def_capacity_cannot_double) {
     int *a = make_seq(3);
     size_t real_cap = spda_cap(a);
     _spda_get_header(a)->capacity = SIZE_MAX / 2 + 1;
-    CHECK(_spda_resize_def(a) == NULL);
+    CHECK(_spda_resize_def(a) == a);
+    CHECK_EQ(spda_cap(a), SIZE_MAX / 2 + 1);  /* capacity unchanged */
     _spda_get_header(a)->capacity = real_cap;
     CHECK_INTS(a, 0, 1, 2);
     spda_destroy(a);
@@ -1599,7 +1615,8 @@ TEST(overflow, resize_def_bytes_overflow) {
     int *a = make_seq(3);
     size_t real_cap = spda_cap(a);
     _spda_get_header(a)->capacity = SIZE_MAX / 8;
-    CHECK(_spda_resize_def(a) == NULL);
+    CHECK(_spda_resize_def(a) == a);
+    CHECK_EQ(spda_cap(a), SIZE_MAX / 8);      /* capacity unchanged */
     _spda_get_header(a)->capacity = real_cap;
     CHECK_INTS(a, 0, 1, 2);
     spda_destroy(a);
@@ -1737,6 +1754,138 @@ TEST(self_append, other_array_unaffected) {
 }
 
 /* ======================================================================== */
+/* Failed resize keeps the array  (ISSUES.md S1)                            */
+/* ======================================================================== */
+/* Contract: every function that returns the array returns the one it was
+   given, unchanged, on any failure, so `a = f(a, ...)` never loses `a`.
+   Out-of-memory is simulated with fail_alloc_after(). */
+
+/* A full array, so the next append/insert must grow. */
+static int *make_full(void) {
+    int *a = make_seq(SPDA_DEFAULT_CAPACITY);
+    return a;
+}
+
+static void check_full_untouched(const int *a) {
+    CHECK_EQ(spda_len(a), SPDA_DEFAULT_CAPACITY);
+    CHECK_EQ(spda_cap(a), SPDA_DEFAULT_CAPACITY);
+    for (int i = 0; i < SPDA_DEFAULT_CAPACITY; i++)
+        if (a[i] != i) { CHECK_EQ(a[i], i); break; }
+}
+
+TEST(oom, resize_grow_keeps_array) {
+    int *a = make_seq(4);
+    int *before = a;
+    fail_alloc_after(0);
+    a = _spda_resize(a, 1000);
+    CHECK(a == before);
+    CHECK_EQ(spda_cap(a), SPDA_DEFAULT_CAPACITY);
+    CHECK_INTS(a, 0, 1, 2, 3);
+    spda_destroy(a);
+}
+
+/* The old code clamped length before realloc: a failed shrink lost data. */
+TEST(oom, resize_shrink_keeps_all_elements) {
+    int *a = make_seq(10);
+    int *before = a;
+    fail_alloc_after(0);
+    a = _spda_resize(a, 3);
+    CHECK(a == before);
+    CHECK_EQ(spda_cap(a), SPDA_DEFAULT_CAPACITY);
+    CHECK_INTS(a, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+    spda_destroy(a);
+}
+
+TEST(oom, resize_def_keeps_array) {
+    int *a = make_full();
+    int *before = a;
+    fail_alloc_after(0);
+    a = _spda_resize_def(a);
+    CHECK(a == before);
+    check_full_untouched(a);
+    spda_destroy(a);
+}
+
+TEST(oom, shrink_to_fit_keeps_array) {
+    int *a = make_seq(1000);
+    while (spda_len(a) > 10) spda_pop(a);
+    size_t cap = spda_cap(a);
+    int *before = a;
+    fail_alloc_after(0);
+    a = spda_shrink_to_fit(a);
+    CHECK(a == before);
+    CHECK_EQ(spda_cap(a), cap);
+    CHECK_INTS(a, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+    spda_destroy(a);
+}
+
+TEST(oom, append_keeps_array) {
+    int *a = make_full();
+    int *before = a;
+    fail_alloc_after(0);
+    spda_append(a, 99);
+    CHECK(a == before);
+    check_full_untouched(a);
+    spda_append(a, 99);                 /* recovers once memory is back */
+    REQUIRE(spda_len(a) == SPDA_DEFAULT_CAPACITY + 1);
+    CHECK_EQ(a[SPDA_DEFAULT_CAPACITY], 99);
+    spda_destroy(a);
+}
+
+TEST(oom, append_many_keeps_array) {
+    int *a = make_full();
+    int *before = a;
+    int items[100] = {0};
+    fail_alloc_after(0);
+    spda_append_items(a, items, 100);
+    CHECK(a == before);
+    check_full_untouched(a);
+    spda_destroy(a);
+}
+
+/* Self-append whose resize fails: the alias offset logic must not run. */
+TEST(oom, self_append_keeps_array) {
+    int *a = make_full();
+    int *before = a;
+    fail_alloc_after(0);
+    spda_append_items(a, a, spda_len(a));
+    CHECK(a == before);
+    check_full_untouched(a);
+    spda_destroy(a);
+}
+
+TEST(oom, insert_keeps_array) {
+    int *a = make_full();
+    int *before = a;
+    fail_alloc_after(0);
+    spda_insert(a, 0, -1);
+    CHECK(a == before);
+    check_full_untouched(a);
+    spda_destroy(a);
+}
+
+TEST(oom, create_and_copy_return_null) {
+    fail_alloc_after(0);
+    CHECK(spda_create(int) == NULL);
+    int *a = make_seq(5);
+    fail_alloc_after(0);
+    CHECK(spda_copy(a) == NULL);
+    CHECK_INTS(a, 0, 1, 2, 3, 4);
+    spda_destroy(a);
+}
+
+/* Overflow takes the same path as OOM inside append_many: this used to
+   "succeed" and memcpy past the buffer (bus error / ASan). */
+TEST(oom, append_many_overflow_does_not_write) {
+    int *a = make_seq(2);
+    int item = 5;
+    int *r = _spda_append_many(a, &item, SIZE_MAX / 2);
+    CHECK(r == a);
+    CHECK_INTS(a, 0, 1);
+    spda_destroy(a);
+}
+
+/* ======================================================================== */
 /* Header signature / validity  (ISSUES.md S3)                              */
 /* ======================================================================== */
 
@@ -1854,6 +2003,21 @@ TEST(magic, destroy_poisons_signature) {
     spda_destroy(a);                     /* second destroy is a no-op, not a double free */
 }
 #endif
+
+/* Invalid arrays: the pointer passed in comes back, never NULL-ed. */
+TEST(oom, invalid_array_pointer_preserved) {
+    int *a = NULL;
+    spda_insert(a, 0, 1);
+    CHECK(a == NULL);
+    ForgedArray f;
+    int *p = forge(&f, 0), *orig = p;
+    spda_insert(p, 0, 1);
+    p = _spda_resize(p, 10);
+    p = _spda_resize_def(p);
+    p = spda_shrink_to_fit(p);
+    spda_append(p, 1);
+    CHECK(p == orig);
+}
 
 /* ======================================================================== */
 /* Randomised comparison against a plain C array                            */
