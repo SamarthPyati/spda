@@ -16,6 +16,10 @@
  * messages) is captured and only shown for tests that fail.
  */
 
+/* The runner uses POSIX (fork, strsignal, fileno, dup2). glibc hides these
+   under strict -std=c11/c17 unless a POSIX level is requested. */
+#define _POSIX_C_SOURCE 200809L
+
 #include <limits.h>
 #include <signal.h>
 #include <stdarg.h>

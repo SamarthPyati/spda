@@ -426,7 +426,10 @@ SPDA_DEF void spda_destroy(void *array) {
 	}
 
 	spda_header_t *header = _spda_get_header(array);
-	header->magic = 0;   // poison: a second destroy (or later use) is rejected
+	// Poison the signature so a second destroy (or later use) is rejected.
+	// volatile: a plain store right before free() is a dead store that
+	// optimisers (GCC -O2) delete, which silently re-enables double frees.
+	*(volatile size_t *)&header->magic = 0;
 	SPDA_FREE(header);
 	_spda_clear_error();
 }
