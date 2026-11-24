@@ -13,18 +13,29 @@
 * size_t stride = size of each items in array;
 * void *elements = elements in array;
 *
-*  Structure of the array: 
+*  Structure of the array:
 *                 METADATA                                 ELEMENTS
-*  +---------------------------------------------+---------------------------------+
-*  |  capacity   |  length   |  stride   | (pad) |            elements             |
-*  +---------------------------------------------+---------------------------------+
-*  |  (size_t)   |  (size_t) |  (size_t) |       |            (void *)             |
-*  +---------------------------------------------+---------------------------------+
-*                                                ^
-*                                            array pointer
+*  +------------------------------------------------+------------------------------+
+*  |  capacity   |  length   |  stride   |  magic   |           elements           |
+*  +------------------------------------------------+------------------------------+
+*  |  (size_t)   |  (size_t) |  (size_t) | (size_t) |           (void *)           |
+*  +------------------------------------------------+------------------------------+
+*                                                   ^
+*                                               array pointer
 *
-*  The header is padded to a multiple of max(alignof(max_align_t), 16) bytes
-*  (32 on 64-bit platforms) so elements of any standard type are aligned.
+*  The header is a multiple of max(alignof(max_align_t), 16) bytes (32 on
+*  64-bit platforms) so elements of any standard type are aligned. `magic`
+*  sits in what would otherwise be padding and marks live arrays.
+*
+* * Requirements *
+*  - C11 (_Generic, _Alignas, _Static_assert, _Thread_local).
+*  - __typeof__ for the insertion macros: GCC / Clang in any C mode, or a C23
+*    compiler. MSVC's C compiler is not supported; use clang-cl or GCC/MinGW.
+*
+* * Usage *
+*  Define SPDA_IMPLEMENTATION in exactly one .c file before including this
+*  header (or SPDA_STATIC everywhere for a private copy per file).
+*  See README.md for the full API, error handling and caveats.
 */
 
 #ifndef SPDA_HEADER_GUARD_H_
@@ -187,7 +198,11 @@ SPDA_DEF bool _spda_pop(void *array, void *dest);
 
 SPDA_DEF void spda_reverse(void *array);     // reverse array inplace
 
-SPDA_DEF void spda_clear(void *array);
+SPDA_DEF void spda_clear(void *array);      // length = 0, capacity kept
+
+/* Set the length directly (must be <= capacity). Raising it does NOT
+   initialise the newly exposed elements: they hold whatever was in memory,
+   so write them before reading. Lowering it is always safe. */
 SPDA_DEF bool spda_set_length(void *array, size_t length);
 
 /* Sort and search */
@@ -247,8 +262,14 @@ SPDA_DEF void spda_fmt_str(FILE *o, const void *e);
     } while (0)
 
 // `array` is evaluated once and the end is fixed when the loop starts.
-// Do not append or insert inside the body as a reallocation would change 
-// the array pointer invalidating `varname`.
+// Inside the body you may read and write elements (and sort / reverse), but
+// must NOT change the length:
+//   - append / insert can reallocate, leaving `varname` pointing at freed memory;
+//   - remove / pop / swap-remove shift elements, skipping one and running past
+//     the new end.
+// To change the length while iterating, use an index loop through the array
+// variable instead, e.g. `for (size_t i = 0; i < spda_len(a); i++)`, or
+// iterate backwards when removing.
 #define spda_foreach(type, varname, array)                                         \
     for (type *varname = (array), *varname##_end_ = varname + spda_len(varname);   \
          varname != varname##_end_; ++varname)
