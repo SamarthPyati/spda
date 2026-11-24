@@ -143,7 +143,7 @@ SPDA_DEF const char *spda_strerror(spda_err_t err);  // short description of an 
 
 /* Core Operations */
 SPDA_DEF void *_spda_create(size_t cap, size_t stride);
-SPDA_DEF void spda_destroy(void *array);
+SPDA_DEF void spda_destroy(void *array);   // free the array; NULL is a no-op
 
 /* Field Operations */
 static inline spda_header_t* _spda_get_header(const void *array) {
@@ -184,7 +184,9 @@ static inline bool _spda_alloc_size(size_t count, size_t stride, size_t *bytes) 
 
 /* Memory Operations */
 SPDA_DEF void *_spda_resize_def(void *array);
+// Set the capacity exactly (truncates the length if smaller): a = _spda_resize(a, n)
 SPDA_DEF void *_spda_resize(void *array, size_t size);
+// If under 25% full, shrink to twice the length: a = spda_shrink_to_fit(a)
 SPDA_DEF void *spda_shrink_to_fit(void *array);
 
 /* Array Operations */
@@ -206,11 +208,14 @@ SPDA_DEF void spda_clear(void *array);      // length = 0, capacity kept
 SPDA_DEF bool spda_set_length(void *array, size_t length);
 
 /* Sort and search */
+// Sort in place with a qsort-style comparator (receives pointers to elements).
 SPDA_DEF void spda_sort(void *array, int (*compar)(const void *, const void *));
 
 /* Utilities */
+// Independent copy with the same length and capacity, or NULL on failure.
 SPDA_DEF void *spda_copy(void *src);
 
+// Element printer for spda_print_with / spda_fprint_with: write *elem to f.
 typedef void (*spda_elem_fn)(FILE *f, const void *elem);
 SPDA_DEF void _spda_fprint(FILE *out, const void *array, spda_elem_fn pfn);
 
@@ -234,12 +239,15 @@ SPDA_DEF void spda_fmt_ldouble(FILE *o, const void *e);
 SPDA_DEF void spda_fmt_str(FILE *o, const void *e);
 
 /* Macros */
+// New empty array of `type` (capacity SPDA_DEFAULT_CAPACITY), or NULL on failure.
 #define spda_create(type) \
     (type *) _spda_create(SPDA_DEFAULT_CAPACITY, sizeof(type))
 
+// New empty array with room for at least `capacity` elements, or NULL on failure.
 #define spda_reserve(type, capacity) \
     (type *) _spda_create(capacity, sizeof(type))
 
+// Append one value.
 #define spda_append(array, value)                                     \
     do {                                                              \
         __typeof__(array) *_spda_pa = &(array);                       \
@@ -247,6 +255,7 @@ SPDA_DEF void spda_fmt_str(FILE *o, const void *e);
         *_spda_pa = _spda_append(*_spda_pa, &spda__tmp_);             \
     } while (0)
 
+// Append several values: spda_append_many(a, 1, 2, 3).
 #define spda_append_many(array, ...)                                  \
     do {                                                              \
         __typeof__(array) *_spda_pa = &(array);                       \
@@ -255,6 +264,7 @@ SPDA_DEF void spda_fmt_str(FILE *o, const void *e);
                                       SPDA_COUNTOF(spda__tmp_));      \
     } while (0)
 
+// Append `count` elements from a C array (may point into `array` itself).
 #define spda_append_items(array, items, count)                        \
     do {                                                              \
         __typeof__(array) *_spda_pa = &(array);                       \
@@ -274,6 +284,7 @@ SPDA_DEF void spda_fmt_str(FILE *o, const void *e);
     for (type *varname = (array), *varname##_end_ = varname + spda_len(varname);   \
          varname != varname##_end_; ++varname)
 
+// Insert before `idx`; idx == length appends.
 #define spda_insert(array, idx, value)                                \
     do {                                                              \
         __typeof__(array) *_spda_pa = &(array);                       \
@@ -281,13 +292,17 @@ SPDA_DEF void spda_fmt_str(FILE *o, const void *e);
         *_spda_pa = _spda_insert(*_spda_pa, (idx), &spda__tmp_);      \
     } while (0)
 
+// Remove at `idx` (or `n` from `idx`), shifting later elements down.
+// The _into forms copy the removed element(s) to `dest`. Return false on failure.
 #define spda_remove(array, idx) 			_spda_remove((array), (idx), 1, NULL)
 #define spda_remove_into(array, idx, dest)  _spda_remove((array), (idx), 1, (dest))
 #define spda_remove_range(array, idx, n)	_spda_remove((array), (idx), (n), NULL)
 
+// O(1) remove: move the last element into the gap. Order is not kept.
 #define spda_swap_remove(array, idx)             _spda_swap_remove((array), (idx), NULL)
 #define spda_swap_remove_into(array, idx, dest)  _spda_swap_remove((array), (idx), (dest))
 
+// Remove the last element (optionally copying it to `dest`). Return false if empty.
 #define spda_pop(array)            _spda_pop((array), NULL)
 #define spda_pop_into(array, dest) _spda_pop((array), (dest))
 
@@ -311,6 +326,8 @@ SPDA_DEF void spda_fmt_str(FILE *o, const void *e);
 	char *             : spda_fmt_str,     \
 	const char *       : spda_fmt_str)
 
+// Print as [a, b, c]. spda_print adds a newline; spda_fprint does not.
+// The _with forms take a custom spda_elem_fn (needed for structs).
 #define spda_print(array) 			(_spda_fprint(stdout, (array), spda_default_fmt(array)), (void)putchar('\n'))
 #define spda_print_with(array, pfn) (_spda_fprint(stdout, (array), (pfn)), (void)putchar('\n'))
 

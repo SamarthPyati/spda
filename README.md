@@ -3,11 +3,49 @@
 A **single-header, generic dynamic array** for C. You work with a plain typed
 pointer (`int *`, `Point *`, ...), index it with `a[i]`, and the library takes care of the rest.
 
+**Why:** growable arrays in C usually mean hand-written `realloc` code with a
+separate length and capacity for every array, or a `void *` container that loses
+the element type. With spda the array *is* a `T *`, so it works with `a[i]`, with
+pointer arithmetic, and with any function that takes `T *`. The length and capacity
+travel with it, and every operation is bounds- and overflow-checked.
+
+## Contents
+
+- [Quick start](#quick-start)
+- [Features](#features) · [Requirements](#requirements) · [Installation](#installation)
+- [Usage](#usage) · [Error handling](#error-handling) · [Caveats](#caveats)
+- [API reference](#api-reference) · [Configuration](#configuration) · [Memory layout](#memory-layout)
+- [Testing](#testing) · [Contributing](#contributing)
+
+## Quick start
+
+Copy `spda.h` next to a new `main.c`:
+
 ```c
-int *a = spda_create(int);
-spda_append(a, 42);
-printf("%d %zu\n", a[0], spda_len(a));   // 42 1
-spda_destroy(a);
+#include <stdio.h>
+#define SPDA_IMPLEMENTATION   // in exactly one .c file
+#include "spda.h"
+
+int main(void) {
+    int *a = spda_create(int);
+    for (int i = 1; i <= 5; i++)
+        spda_append(a, i * i);
+
+    spda_print(a);
+    printf("length %zu, a[2] = %d\n", spda_len(a), a[2]);
+
+    spda_destroy(a);
+    return 0;
+}
+```
+
+```sh
+cc -std=c17 -o main main.c && ./main
+```
+
+```
+[1, 4, 9, 16, 25]
+length 5, a[2] = 9
 ```
 
 ## Features
@@ -93,6 +131,14 @@ int main(void) {
     spda_destroy(a);
     return 0;
 }
+```
+
+Output:
+
+```
+[7, 1, 2, 3, 3, 48, 1, 34, 0, 12]
+popped 12, length 9, capacity 32
+[-2, 2, 4, 6, 6, 96, 2, 68, 0]
 ```
 
 ### Structs and custom printers
@@ -334,6 +380,24 @@ make DEBUG=1 test     # same, with AddressSanitizer + UndefinedBehaviorSanitizer
 
 Each test runs in its own process with a timeout, so a crash or hang fails only
 that test. `SPDA_TEST_NOFORK=1` runs them in-process for debugging with lldb/gdb.
+
+## Contributing
+
+1. **Run both test modes before sending a change.** `make test` and
+   `make DEBUG=1 test` must both pass with no compiler warnings.
+2. **Add a test for every fix or feature.** Write `TEST(group, name) { ... }`
+   anywhere in `tests/test.c` and it registers itself. To exercise out-of-memory
+   paths, call `fail_alloc_after(0)` so the next allocation fails.
+3. **Follow the library's conventions:**
+   - Internal names use the `_spda_` prefix.
+   - Every function that can fail reports through `SPDA_ERR(code, msg)` and calls
+     `_spda_clear_error()` on success.
+   - On failure, leave the array untouched and return the array that was passed in.
+   - Allocate only through `SPDA_MALLOC` / `SPDA_REALLOC` / `SPDA_FREE`.
+4. **Keep the docs current.** Update this README when the API changes, and keep
+   its examples compiling.
+
+Known issues and agreed future work are tracked in [`ISSUES.md`](ISSUES.md).
 
 ## License
 
