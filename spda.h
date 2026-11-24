@@ -1,12 +1,22 @@
 /*
 **  @brief: A Robust Dynamic Array Implementation in C **
-*   @Author: Samarth Pyati 
-*   @Date : 08-11-2026
-*   @Version: 2.0
+*   @Author: Samarth Pyati
+*   @Date : 24-11-2026
+*   @Version: 2.0.0 (see SPDA_VERSION_* below)
 *
-*   Change Notes: 
-*       1. Making this library as a single header implementation
-* 
+*   Change Notes (2.0.0) — full list and 1.x migration guide in CHANGELOG.md:
+*       1. Single-header library (stb style); spda.c is gone.
+*       2. Memory safety: size-overflow checks, safe self-append, elements
+*          aligned for every standard type, and a header signature (magic)
+*          that rejects foreign and destroyed arrays.
+*       3. Failures never lose the array: functions return the original
+*          array unchanged; resize / shrink no longer return NULL.
+*       4. Error reporting: per-thread spda_last_error() / spda_strerror(),
+*          logged to stderr by default (SPDA_NO_LOG / SPDA_LOG to change).
+*       5. Pluggable allocator (SPDA_MALLOC / SPDA_REALLOC / SPDA_FREE).
+*       6. Macros evaluate each argument exactly once; new swap-remove,
+*          remove-range and _into variants; generic printing via _Generic.
+*
 * * Memory Layout *
 * size_t capacity = max elements that array can contain;
 * size_t length = number of elements the array actually contains;
@@ -40,6 +50,13 @@
 
 #ifndef SPDA_HEADER_GUARD_H_
 #define SPDA_HEADER_GUARD_H_
+
+// spda.h follows semantic versioning (semver)
+#define SPDA_VERSION_MAJOR  2
+#define SPDA_VERSION_MINOR  0
+#define SPDA_VERSION_PATCH  0
+#define SPDA_VERSION        (SPDA_VERSION_MAJOR * 10000 + SPDA_VERSION_MINOR * 100 + SPDA_VERSION_PATCH)
+#define SPDA_VERSION_STRING "2.0.0"
 
 #include <stdio.h>
 #include <stdlib.h>

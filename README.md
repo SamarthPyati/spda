@@ -9,13 +9,16 @@ the element type. With spda the array *is* a `T *`, so it works with `a[i]`, wit
 pointer arithmetic, and with any function that takes `T *`. The length and capacity
 travel with it, and every operation is bounds- and overflow-checked.
 
+> **Current version: 2.0.0.** Upgrading from 1.x? 2.0 has breaking changes. See
+> the [migration guide](CHANGELOG.md#migrating-from-1x) in the [changelog](CHANGELOG.md).
+
 ## Contents
 
 - [Quick start](#quick-start)
 - [Features](#features) · [Requirements](#requirements) · [Installation](#installation)
 - [Usage](#usage) · [Error handling](#error-handling) · [Caveats](#caveats)
 - [API reference](#api-reference) · [Configuration](#configuration) · [Memory layout](#memory-layout)
-- [Testing](#testing) · [Contributing](#contributing)
+- [Versioning](#versioning) · [Testing](#testing) · [Contributing](#contributing)
 
 ## Quick start
 
@@ -369,6 +372,19 @@ The header is 32 bytes on 64-bit platforms (16 on 32-bit), which keeps elements
 aligned to `max(alignof(max_align_t), 16)`. `magic` is the signature that
 identifies live arrays. Types aligned to more than 16 bytes (`_Alignas(32)`, AVX
 vectors) are not supported.
+
+## Versioning
+
+spda follows [Semantic Versioning](https://semver.org/), and the header exposes its version:
+
+```c
+#if SPDA_VERSION >= 20000                // 2.0.0 or newer
+printf("spda %s\n", SPDA_VERSION_STRING); // "2.0.0"
+#endif
+```
+
+`SPDA_VERSION_MAJOR`, `SPDA_VERSION_MINOR` and `SPDA_VERSION_PATCH` are also
+available. Changes in each release are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## Testing
 

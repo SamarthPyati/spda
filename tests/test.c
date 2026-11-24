@@ -2646,6 +2646,25 @@ TEST(macro, foreach_nested_loops) {
 }
 
 /* ======================================================================== */
+/* Version                                                                  */
+/* ======================================================================== */
+
+/* SPDA_VERSION and SPDA_VERSION_STRING must agree with the component macros. */
+TEST(version, macros_consistent) {
+    CHECK_EQ(SPDA_VERSION, SPDA_VERSION_MAJOR * 10000 + SPDA_VERSION_MINOR * 100
+                           + SPDA_VERSION_PATCH);
+    char expect[32];
+    snprintf(expect, sizeof expect, "%d.%d.%d",
+             SPDA_VERSION_MAJOR, SPDA_VERSION_MINOR, SPDA_VERSION_PATCH);
+    CHECK(strcmp(SPDA_VERSION_STRING, expect) == 0);
+    CHECK(SPDA_VERSION_MINOR < 100 && SPDA_VERSION_PATCH < 100);
+}
+
+#if SPDA_VERSION < 20000
+#error "SPDA_VERSION must be usable in #if"
+#endif
+
+/* ======================================================================== */
 /* Randomised comparison against a plain C array                            */
 /* ======================================================================== */
 
