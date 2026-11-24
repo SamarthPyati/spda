@@ -72,7 +72,6 @@ _Static_assert(sizeof(spda_header_t) == (4 * sizeof(size_t) + 15) / 16 * 16,
 #endif
 
 #define SPDA_GROWTH_FACTOR 2
-#define SPDA_SHRINK_THRESHOLD 0.25 // if array utilisation falls below 25% shrink the capacity of array 
 
 /* ERROR HANDLING
  *
@@ -304,6 +303,21 @@ static void _spda_set_error(spda_err_t err, const char *func, const char *msg) {
 
 static inline void _spda_clear_error(void) {
 	_spda_last_err = SPDA_OK;
+}
+
+// Swap two non-overlapping blocks of n bytes through fixed 64 byte 
+// buffer chunk by chunk instaed of reallocating every time
+static inline void _spda_swap_bytes(char *a, char *b, size_t n) {
+	char tmp[64];
+	while (n > 0) {
+		size_t k = (n < sizeof(tmp)) ? n : sizeof(tmp);
+		memcpy(tmp, a, k);
+		memcpy(a, b, k);
+		memcpy(b, tmp, k);
+		a += k;
+		b += k;
+		n -= k;
+	}
 }
 
 SPDA_DEF spda_err_t spda_last_error(void) {
@@ -643,21 +657,12 @@ SPDA_DEF void spda_reverse(void *array) {
 	
 	size_t stride = spda_stride(array);
 	size_t len = spda_len(array);
-	char *temp = SPDA_MALLOC(stride);
-	
-	if (!temp) {
-		SPDA_ERR(SPDA_ERR_NOMEM, "Failed to allocate temporary buffer");
-		return;
-	}
-	
+
 	for (size_t i = 0; i < len / 2; ++i) {
-		char *a = (char *)array + i * stride;
-		char *b = (char *)array + ((len - i - 1) * stride);
-		memcpy(temp, a, stride);
-		memcpy(a, b, stride);
-		memcpy(b, temp, stride);
+		_spda_swap_bytes((char *)array + i * stride,
+		                 (char *)array + (len - i - 1) * stride, stride);
 	}
-	SPDA_FREE(temp);
+
 	_spda_clear_error();
 }
 

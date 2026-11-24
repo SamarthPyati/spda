@@ -996,6 +996,78 @@ TEST(reverse, structs) {
     spda_destroy(a);
 }
 
+/* Elements are swapped through a 64-byte stack buffer in chunks. These cover
+   elements larger than one chunk, sizes that leave a partial last chunk, and
+   exactly one chunk: every byte of each element must move together. */
+
+/* Fill element `e` of `size` bytes with a pattern unique to (tag, byte). */
+static void fill_pattern(unsigned char *e, size_t size, int tag) {
+    for (size_t k = 0; k < size; k++) e[k] = (unsigned char)(tag * 31 + k * 7);
+}
+
+static bool has_pattern(const unsigned char *e, size_t size, int tag) {
+    for (size_t k = 0; k < size; k++)
+        if (e[k] != (unsigned char)(tag * 31 + k * 7)) return false;
+    return true;
+}
+
+TEST(reverse, large_elements_multi_chunk) {
+    Big *a = spda_create(Big);                     /* 512 bytes = 8 chunks */
+    for (int t = 0; t < 5; t++) {
+        Big b;
+        fill_pattern(b.bytes, sizeof b.bytes, t);
+        spda_append(a, b);
+    }
+    spda_reverse(a);
+    for (int i = 0; i < 5; i++)
+        CHECK(has_pattern(a[i].bytes, sizeof a[i].bytes, 4 - i));
+    spda_destroy(a);
+}
+
+TEST(reverse, partial_last_chunk) {
+    typedef struct { unsigned char bytes[100]; } Odd;   /* 64 + 36 */
+    Odd *a = spda_create(Odd);
+    for (int t = 0; t < 4; t++) {
+        Odd o;
+        fill_pattern(o.bytes, sizeof o.bytes, t);
+        spda_append(a, o);
+    }
+    spda_reverse(a);
+    for (int i = 0; i < 4; i++)
+        CHECK(has_pattern(a[i].bytes, sizeof a[i].bytes, 3 - i));
+    spda_destroy(a);
+}
+
+TEST(reverse, exactly_one_chunk) {
+    typedef struct { unsigned char bytes[64]; } Chunk;
+    Chunk *a = spda_create(Chunk);
+    for (int t = 0; t < 3; t++) {
+        Chunk c;
+        fill_pattern(c.bytes, sizeof c.bytes, t);
+        spda_append(a, c);
+    }
+    spda_reverse(a);
+    for (int i = 0; i < 3; i++)
+        CHECK(has_pattern(a[i].bytes, sizeof a[i].bytes, 2 - i));
+    spda_destroy(a);
+}
+
+TEST(reverse, single_byte_elements) {
+    char *a = spda_create(char);
+    spda_append_many(a, 'a', 'b', 'c', 'd', 'e');
+    spda_reverse(a);
+    CHECK(a[0] == 'e' && a[1] == 'd' && a[2] == 'c' && a[3] == 'b' && a[4] == 'a');
+    spda_destroy(a);
+}
+
+/* Large array: every element lands in its mirrored position. */
+TEST(reverse, many_elements) {
+    int *a = make_seq(10001);
+    spda_reverse(a);
+    for (int i = 0; i < 10001; i++) REQUIRE(a[i] == 10000 - i);
+    spda_destroy(a);
+}
+
 /* ======================================================================== */
 /* Clear                                                                    */
 /* ======================================================================== */
@@ -2361,13 +2433,22 @@ TEST(error, reverse_codes) {
     spda_reverse((int *)NULL);
     CHECK_ERR(SPDA_ERR_INVALID_ARRAY);
     int *a = make_seq(4);
-    fail_alloc_after(0);
-    spda_reverse(a);
-    CHECK_ERR(SPDA_ERR_NOMEM);
-    CHECK_INTS(a, 0, 1, 2, 3);
     spda_reverse(a);
     CHECK_ERR(SPDA_OK);
     CHECK_INTS(a, 3, 2, 1, 0);
+    spda_destroy(a);
+}
+
+/* ISSUES.md M1: reverse no longer allocates, so a failing allocator cannot
+   make it fail. The pending failure is never consumed, so reset it. */
+TEST(error, reverse_never_allocates) {
+    int *a = make_seq(4);
+    fail_alloc_after(0);
+    spda_reverse(a);
+    CHECK_ERR(SPDA_OK);
+    CHECK_INTS(a, 3, 2, 1, 0);
+    CHECK_EQ(g_alloc_fail_in, 0);          /* still armed: nothing allocated */
+    fail_alloc_after(-1);
     spda_destroy(a);
 }
 
