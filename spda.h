@@ -111,7 +111,7 @@ SPDA_DEF const char *spda_strerror(spda_err_t err);  // short description of an 
     #endif
 #endif
 
-// Per-thread error storage. Override if your compiler lacks C11 _Thread_local. 
+// Per-thread error storage. Override if your compiler lacks C11 _Thread_local.
 #ifndef SPDA_THREAD_LOCAL
     #define SPDA_THREAD_LOCAL _Thread_local
 #endif
@@ -183,6 +183,7 @@ SPDA_DEF void *_spda_insert(void *array, size_t idx, const void* value);
 
 SPDA_DEF bool _spda_remove(void *array, size_t idx, size_t count, void *dest);
 SPDA_DEF bool _spda_swap_remove(void *array, size_t idx, void *dest);
+SPDA_DEF bool _spda_pop(void *array, void *dest);
 
 SPDA_DEF void spda_reverse(void *array);     // reverse array inplace
 
@@ -224,30 +225,39 @@ SPDA_DEF void spda_fmt_str(FILE *o, const void *e);
 #define spda_reserve(type, capacity) \
     (type *) _spda_create(capacity, sizeof(type))
 
-#define spda_append(array, value)                     \
-    do {                                              \
-        __typeof__(*(array)) spda__tmp_ = (value);    \
-        (array) = _spda_append((array), &spda__tmp_); \
+#define spda_append(array, value)                                     \
+    do {                                                              \
+        __typeof__(array) *_spda_pa = &(array);                       \
+        __typeof__(**_spda_pa) spda__tmp_ = (value);                  \
+        *_spda_pa = _spda_append(*_spda_pa, &spda__tmp_);             \
     } while (0)
 
-#define spda_append_many(array, ...)                                                \
-    do {                                                                            \
-        __typeof__(*(array)) spda__tmp_[] = {__VA_ARGS__};                          \
-        (array) = _spda_append_many((array), spda__tmp_, SPDA_COUNTOF(spda__tmp_)); \
+#define spda_append_many(array, ...)                                  \
+    do {                                                              \
+        __typeof__(array) *_spda_pa = &(array);                       \
+        __typeof__(**_spda_pa) spda__tmp_[] = {__VA_ARGS__};          \
+        *_spda_pa = _spda_append_many(*_spda_pa, spda__tmp_,          \
+                                      SPDA_COUNTOF(spda__tmp_));      \
     } while (0)
 
-#define spda_append_items(array, items, count)                            \
-    do {                                                                  \
-            (array) = _spda_append_many((array), (items), (count));       \
+#define spda_append_items(array, items, count)                        \
+    do {                                                              \
+        __typeof__(array) *_spda_pa = &(array);                       \
+        *_spda_pa = _spda_append_many(*_spda_pa, (items), (count));   \
     } while (0)
 
-#define spda_foreach(type, varname, array) \
-    for (type *varname = (array); varname != (array) + spda_len(array); ++varname)
+// `array` is evaluated once and the end is fixed when the loop starts.
+// Do not append or insert inside the body as a reallocation would change 
+// the array pointer invalidating `varname`.
+#define spda_foreach(type, varname, array)                                         \
+    for (type *varname = (array), *varname##_end_ = varname + spda_len(varname);   \
+         varname != varname##_end_; ++varname)
 
-#define spda_insert(array, idx, value)                       \
-    do {                                                     \
-        __typeof__(*(array)) spda__tmp_ = (value);           \
-        (array) = _spda_insert((array), (idx), &spda__tmp_); \
+#define spda_insert(array, idx, value)                                \
+    do {                                                              \
+        __typeof__(array) *_spda_pa = &(array);                       \
+        __typeof__(**_spda_pa) spda__tmp_ = (value);                  \
+        *_spda_pa = _spda_insert(*_spda_pa, (idx), &spda__tmp_);      \
     } while (0)
 
 #define spda_remove(array, idx) 			_spda_remove((array), (idx), 1, NULL)
@@ -257,12 +267,10 @@ SPDA_DEF void spda_fmt_str(FILE *o, const void *e);
 #define spda_swap_remove(array, idx)             _spda_swap_remove((array), (idx), NULL)
 #define spda_swap_remove_into(array, idx, dest)  _spda_swap_remove((array), (idx), (dest))
 
-#define spda_pop(array) 					_spda_remove((array), spda_len(array) - 1, 1, NULL)
-#define spda_pop_into(array, dest) 			_spda_remove((array), spda_len(array) - 1, 1, (dest))
+#define spda_pop(array)            _spda_pop((array), NULL)
+#define spda_pop_into(array, dest) _spda_pop((array), (dest))
 
-/* size_t is always one of unsigned int / long / long long, so its coverred
-   without its own entry (listing it too would be a duplicate type error).
-   Other types (ex. structs) fail to compile: use spda_print_with. */
+// Default element printer mapped with _Generic
 #define spda_default_fmt(array) _Generic((array)[0], \
 	bool               : spda_fmt_bool,    \
 	char               : spda_fmt_char,    \
@@ -617,6 +625,21 @@ SPDA_DEF bool _spda_remove(void *array, size_t idx, size_t count, void *dest) {
 	_spda_get_header(array)->length -= count;
 	_spda_clear_error();
 	return true;
+}
+
+SPDA_DEF bool _spda_pop(void *array, void *dest) {
+	if (!_spda_is_valid(array)) {
+		SPDA_ERR(SPDA_ERR_INVALID_ARRAY, "Pointer not a spda compatible dynamic array.");
+		return false;
+	}
+
+	size_t length = spda_len(array);
+	if (length == 0) {
+		SPDA_ERR(SPDA_ERR_OUT_OF_BOUNDS, "Cannot pop from an empty array.");
+		return false;
+	}
+
+	return _spda_remove(array, length - 1, 1, dest);
 }
 
 SPDA_DEF bool _spda_swap_remove(void *array, size_t idx, void *dest) {

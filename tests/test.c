@@ -2491,6 +2491,157 @@ TEST(error, forged_array_reports_invalid) {
 }
 
 /* ======================================================================== */
+/* Macro arguments evaluated once  (ISSUES.md M2)                           */
+/* ======================================================================== */
+/* Each test passes an argument with a side effect (arrs[i++], a counting
+   function) and checks it ran exactly once and hit the intended array. */
+
+static int g_pick_calls;
+static int **pick_slot(int **slot) { g_pick_calls++; return slot; }
+static int  count_int(int v)       { g_pick_calls++; return v; }
+static size_t count_idx(size_t v)  { g_pick_calls++; return v; }
+
+TEST(macro, append_evaluates_array_once) {
+    int *arrs[2] = { spda_create(int), spda_create(int) };
+    int i = 0;
+    spda_append(arrs[i++], 5);
+    CHECK_EQ(i, 1);
+    CHECK_INTS(arrs[0], 5);
+    CHECK_EQ(spda_len(arrs[1]), 0);            /* neighbour untouched */
+    spda_destroy(arrs[0]);
+    spda_destroy(arrs[1]);
+}
+
+/* A full array reallocates: the moved pointer must land in the same slot. */
+TEST(macro, append_realloc_writes_back_to_same_slot) {
+    int *arrs[2] = { make_full(), spda_create(int) };
+    int *other = arrs[1];
+    int i = 0;
+    spda_append(arrs[i++], 99);
+    CHECK_EQ(i, 1);
+    REQUIRE(spda_len(arrs[0]) == SPDA_DEFAULT_CAPACITY + 1);
+    CHECK_EQ(arrs[0][SPDA_DEFAULT_CAPACITY], 99);
+    CHECK(arrs[1] == other);
+    spda_destroy(arrs[0]);
+    spda_destroy(arrs[1]);
+}
+
+TEST(macro, append_through_function_call) {
+    int *a = spda_create(int);
+    g_pick_calls = 0;
+    spda_append(*pick_slot(&a), 7);
+    CHECK_EQ(g_pick_calls, 1);
+    CHECK_INTS(a, 7);
+    spda_destroy(a);
+}
+
+TEST(macro, append_value_evaluated_once) {
+    int *a = spda_create(int);
+    g_pick_calls = 0;
+    spda_append(a, count_int(42));
+    CHECK_EQ(g_pick_calls, 1);
+    CHECK_INTS(a, 42);
+    spda_destroy(a);
+}
+
+TEST(macro, insert_evaluates_each_argument_once) {
+    int *arrs[2] = { make_full(), spda_create(int) };
+    int i = 0;
+    g_pick_calls = 0;
+    spda_insert(arrs[i++], count_idx(0), count_int(-1));
+    CHECK_EQ(i, 1);
+    CHECK_EQ(g_pick_calls, 2);                 /* idx once, value once */
+    REQUIRE(spda_len(arrs[0]) == SPDA_DEFAULT_CAPACITY + 1);
+    CHECK_EQ(arrs[0][0], -1);
+    CHECK_EQ(arrs[0][1], 0);
+    CHECK_EQ(spda_len(arrs[1]), 0);
+    spda_destroy(arrs[0]);
+    spda_destroy(arrs[1]);
+}
+
+TEST(macro, append_many_evaluates_array_once) {
+    int *arrs[2] = { make_full(), spda_create(int) };
+    int i = 0;
+    spda_append_many(arrs[i++], 100, 101, 102);
+    CHECK_EQ(i, 1);
+    REQUIRE(spda_len(arrs[0]) == SPDA_DEFAULT_CAPACITY + 3);
+    CHECK_EQ(arrs[0][SPDA_DEFAULT_CAPACITY + 2], 102);
+    CHECK_EQ(spda_len(arrs[1]), 0);
+    spda_destroy(arrs[0]);
+    spda_destroy(arrs[1]);
+}
+
+TEST(macro, append_items_evaluates_array_once) {
+    int items[3] = {7, 8, 9};
+    int *arrs[2] = { make_full(), spda_create(int) };
+    int i = 0;
+    spda_append_items(arrs[i++], items, 3);
+    CHECK_EQ(i, 1);
+    REQUIRE(spda_len(arrs[0]) == SPDA_DEFAULT_CAPACITY + 3);
+    CHECK_EQ(arrs[0][SPDA_DEFAULT_CAPACITY], 7);
+    CHECK_EQ(spda_len(arrs[1]), 0);
+    spda_destroy(arrs[0]);
+    spda_destroy(arrs[1]);
+}
+
+TEST(macro, pop_evaluates_array_once) {
+    int *arrs[2] = { make_seq(3), make_seq(3) };
+    int i = 0, out = -1;
+    CHECK(spda_pop(arrs[i++]));
+    CHECK_EQ(i, 1);
+    CHECK(spda_pop_into(arrs[--i], &out));     /* back to slot 0 */
+    CHECK_EQ(i, 0);
+    CHECK_EQ(out, 1);
+    CHECK_INTS(arrs[0], 0);
+    CHECK_INTS(arrs[1], 0, 1, 2);
+    spda_destroy(arrs[0]);
+    spda_destroy(arrs[1]);
+}
+
+TEST(macro, pop_empty_reports_pop) {
+    int *a = spda_create(int);
+    stderr_capture_begin();
+    CHECK(!spda_pop(a));
+    const char *log = stderr_capture_end();
+    CHECK_ERR(SPDA_ERR_OUT_OF_BOUNDS);
+    CHECK(strstr(log, "_spda_pop") != NULL);
+    CHECK(strstr(log, "Cannot pop from an empty array.") != NULL);
+    spda_destroy(a);
+}
+
+TEST(macro, pop_null_reports_invalid_array) {
+    int out = 7;
+    CHECK(!spda_pop_into((int *)NULL, &out));
+    CHECK_ERR(SPDA_ERR_INVALID_ARRAY);
+    CHECK_EQ(out, 7);
+}
+
+TEST(macro, foreach_evaluates_array_once) {
+    int *a = make_seq(10);
+    int **slot = &a;
+    int sum = 0, visits = 0;
+    g_pick_calls = 0;
+    spda_foreach(int, it, *pick_slot(slot)) {
+        sum += *it;
+        visits++;
+    }
+    CHECK_EQ(g_pick_calls, 1);
+    CHECK_EQ(visits, 10);
+    CHECK_EQ(sum, 45);
+    spda_destroy(a);
+}
+
+TEST(macro, foreach_nested_loops) {
+    int *a = make_seq(3);
+    int pairs = 0;
+    spda_foreach(int, x, a)
+        spda_foreach(int, y, a)
+            pairs += (*x == *y);
+    CHECK_EQ(pairs, 3);
+    spda_destroy(a);
+}
+
+/* ======================================================================== */
 /* Randomised comparison against a plain C array                            */
 /* ======================================================================== */
 
